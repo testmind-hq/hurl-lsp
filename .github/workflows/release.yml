@@ -81,7 +81,7 @@ jobs:
             tar -czf "hurl-lsp-${version}-${{ matrix.target }}.tar.gz" -C dist "hurl-lsp${{ matrix.ext }}"
           fi
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: hurl-lsp-${{ matrix.target }}
           path: hurl-lsp-*
