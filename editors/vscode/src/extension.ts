@@ -7,7 +7,6 @@ let client: LanguageClient | undefined;
 let runtimeLogChannel: vscode.OutputChannel | undefined;
 let requestLogChannel: vscode.OutputChannel | undefined;
 let logNotificationDisposable: vscode.Disposable | undefined;
-const RUN_COMMANDS = new Set(["hurl.runEntry", "hurl.runEntryWithVars", "hurl.runChain", "hurl.runFile"]);
 const REQUEST_LOG_PREFIX = "[hurl-request] ";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -30,7 +29,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       requestLogChannel?.show(true);
     }),
   );
-  registerCommandForwarders(context);
 
   await start(context);
 }
@@ -76,7 +74,16 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
   }
 
   const traceSetting = vscode.workspace.getConfiguration("hurl").get<string>("server.trace", "off");
-  const serverOptions: ServerOptions = { command };
+  const runVerbosity = vscode.workspace.getConfiguration("hurl").get<string>("run.verbosity", "verbose");
+  const serverOptions: ServerOptions = {
+    command,
+    options: {
+      env: {
+        ...process.env,
+        HURL_RUN_VERBOSITY: runVerbosity,
+      },
+    },
+  };
   const clientOptions: LanguageClientOptions = {
     documentSelector: [{ scheme: "file", language: "hurl" }],
     outputChannelName: "Hurl Language Server",
@@ -101,7 +108,7 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
 
   await client.start();
   client.setTrace(toTrace(traceSetting));
-  appendRuntimeLog(`Language client started (trace=${traceSetting}).`);
+  appendRuntimeLog(`Language client started (trace=${traceSetting}, runVerbosity=${runVerbosity}).`);
 }
 
 function toTrace(value: string): Trace {
@@ -129,31 +136,4 @@ function appendRequestLog(message: string): void {
   }
   const ts = new Date().toISOString();
   requestLogChannel.appendLine(`[${ts}] ${message}`);
-}
-
-function registerCommandForwarders(context: vscode.ExtensionContext): void {
-  const commands = ["hurl.runEntry", "hurl.runEntryWithVars", "hurl.runChain", "hurl.runFile", "hurl.copyAsCurl"];
-  for (const command of commands) {
-    context.subscriptions.push(
-      vscode.commands.registerCommand(command, async (...args: unknown[]) => {
-        if (!client) {
-          vscode.window.showWarningMessage("Hurl language client is not ready yet.");
-          return;
-        }
-        const forwardedArgs = [...args];
-        if (RUN_COMMANDS.has(command)) {
-          const verbosity = vscode.workspace.getConfiguration("hurl").get<string>("run.verbosity", "verbose");
-          forwardedArgs[2] = verbosity;
-          appendRequestLog(`command=${command} verbosity=${verbosity}`);
-        }
-        try {
-          await client.sendRequest("workspace/executeCommand", { command, arguments: forwardedArgs });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          appendRuntimeLog(`Failed to execute command ${command}: ${message}`);
-          vscode.window.showErrorMessage(`Hurl command failed: ${message}`);
-        }
-      }),
-    );
-  }
 }

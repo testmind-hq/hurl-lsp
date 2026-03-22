@@ -424,8 +424,9 @@ impl LanguageServer for Backend {
             .unwrap_or(0);
         let verbosity = arguments
             .get(2)
-            .and_then(|value| value.as_str())
-            .unwrap_or("verbose");
+            .and_then(|value| value.as_str().map(|s| s.to_string()))
+            .or_else(|| std::env::var("HURL_RUN_VERBOSITY").ok())
+            .unwrap_or_else(|| "verbose".to_string());
         if params.command == COPY_AS_CURL_COMMAND {
             let Some(text) = self.document_text(&uri) else {
                 return Ok(None);
