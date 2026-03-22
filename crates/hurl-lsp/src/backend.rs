@@ -1,5 +1,8 @@
 use crate::{
-    code_lens::{code_lenses, NOOP_COMMAND, RUN_ENTRY_COMMAND, RUN_ENTRY_WITH_VARS_COMMAND},
+    code_lens::{
+        build_curl_for_entry, code_lenses, COPY_AS_CURL_COMMAND, NOOP_COMMAND, RUN_ENTRY_COMMAND,
+        RUN_ENTRY_WITH_VARS_COMMAND,
+    },
     completion::completions_with_external,
     definition::definition_with_external,
     diagnostics::collect_diagnostics_with_external,
@@ -85,6 +88,7 @@ impl LanguageServer for Backend {
                     commands: vec![
                         RUN_ENTRY_COMMAND.to_string(),
                         RUN_ENTRY_WITH_VARS_COMMAND.to_string(),
+                        COPY_AS_CURL_COMMAND.to_string(),
                         NOOP_COMMAND.to_string(),
                     ],
                     work_done_progress_options: WorkDoneProgressOptions::default(),
@@ -226,7 +230,10 @@ impl LanguageServer for Backend {
         if params.command == NOOP_COMMAND {
             return Ok(None);
         }
-        if params.command != RUN_ENTRY_COMMAND && params.command != RUN_ENTRY_WITH_VARS_COMMAND {
+        if params.command != RUN_ENTRY_COMMAND
+            && params.command != RUN_ENTRY_WITH_VARS_COMMAND
+            && params.command != COPY_AS_CURL_COMMAND
+        {
             return Ok(None);
         }
         let arguments = params.arguments;
@@ -242,6 +249,32 @@ impl LanguageServer for Backend {
         let Ok(uri) = Url::parse(uri_str) else {
             return Ok(None);
         };
+        if params.command == COPY_AS_CURL_COMMAND {
+            let Some(line) = arguments
+                .get(1)
+                .and_then(|value| value.as_u64())
+                .map(|value| value as usize)
+            else {
+                return Ok(None);
+            };
+            let Some(text) = self.document_text(&uri) else {
+                return Ok(None);
+            };
+            let Some(curl) = build_curl_for_entry(&text, line) else {
+                self.client
+                    .show_message(MessageType::WARNING, "Unable to build curl for this entry.")
+                    .await;
+                return Ok(None);
+            };
+            self.client
+                .show_message(
+                    MessageType::INFO,
+                    format!("Copy as curl (manual copy):\n{curl}"),
+                )
+                .await;
+            return Ok(Some(serde_json::Value::String(curl)));
+        }
+
         let Ok(path) = uri.to_file_path() else {
             self.client
                 .show_message(
