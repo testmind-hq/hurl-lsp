@@ -80,6 +80,7 @@ When workspace variable files exist (`.hurl-vars`, `vars.env`, `hurl.env`, `.env
 Per-request Code Lens is available with:
 - summary line (`method/path`, section counters)
 - `▶ Run` action (executes `hurl` for the current file path)
+- `⚡ Run with vars` action (uses nearest `.hurl-vars` / `vars.env` / `hurl.env` / `.env` when found)
 
 ### Built-in Formatter
 
@@ -214,7 +215,7 @@ CI result feedback integration from TestMind is a future phase and is not implem
 ### Phase 3 — Differentiating Features
 
 - [x] Variable file integration (workspace env files + cross-file resolution)
-- [~] Code Lens — run implemented, run-with-vars/copy-as-curl pending
+- [~] Code Lens — run and run-with-vars implemented, copy-as-curl pending
 - [ ] Inline execution result display
 - [x] Document outline with metadata support (`documentSymbol`)
 - [ ] Chain case detection and dependency annotation

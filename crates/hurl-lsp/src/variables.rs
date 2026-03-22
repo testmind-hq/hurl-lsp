@@ -18,19 +18,10 @@ pub struct VariableDef {
 }
 
 pub fn load_workspace_variables(document_uri: &Url) -> Vec<VariableDef> {
-    let Some(path) = file_path_from_uri(document_uri) else {
+    let Some(base_dir) = base_dir_from_uri(document_uri) else {
         return Vec::new();
     };
-    let Some(base_dir) = path.parent() else {
-        return Vec::new();
-    };
-
-    let mut dirs = Vec::new();
-    let mut current = Some(base_dir.to_path_buf());
-    while let Some(dir) = current {
-        dirs.push(dir.clone());
-        current = dir.parent().map(Path::to_path_buf);
-    }
+    let mut dirs = ancestor_dirs(base_dir);
     dirs.reverse();
 
     let mut vars = BTreeMap::<String, VariableDef>::new();
@@ -49,11 +40,40 @@ pub fn load_workspace_variables(document_uri: &Url) -> Vec<VariableDef> {
     vars.into_values().collect()
 }
 
+pub fn pick_variable_file(document_uri: &Url) -> Option<PathBuf> {
+    let base_dir = base_dir_from_uri(document_uri)?;
+    let dirs = ancestor_dirs(base_dir);
+    for dir in dirs {
+        for file_name in VARIABLE_FILES {
+            let file_path = dir.join(file_name);
+            if file_path.exists() && file_path.is_file() {
+                return Some(file_path);
+            }
+        }
+    }
+    None
+}
+
 fn file_path_from_uri(uri: &Url) -> Option<PathBuf> {
     if uri.scheme() != "file" {
         return None;
     }
     uri.to_file_path().ok()
+}
+
+fn base_dir_from_uri(uri: &Url) -> Option<PathBuf> {
+    let path = file_path_from_uri(uri)?;
+    path.parent().map(Path::to_path_buf)
+}
+
+fn ancestor_dirs(base_dir: PathBuf) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    let mut current = Some(base_dir);
+    while let Some(dir) = current {
+        dirs.push(dir.clone());
+        current = dir.parent().map(Path::to_path_buf);
+    }
+    dirs
 }
 
 fn parse_variable_file(path: &Path) -> Vec<VariableDef> {
@@ -141,6 +161,28 @@ mod tests {
         let vars = load_workspace_variables(&uri);
         let host = vars.iter().find(|var| var.name == "host").expect("host");
         assert_eq!(host.value, "local.example.com");
+
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn picks_nearest_variable_file() {
+        let base = tmp_dir("hurl-lsp-vars-pick");
+        let nested = base.join("project").join("api");
+        fs::create_dir_all(&nested).expect("mkdir");
+        fs::write(base.join(".env"), "host=root.example.com\n").expect("write root");
+        fs::write(
+            base.join("project").join("vars.env"),
+            "host=project.example.com\n",
+        )
+        .expect("write project");
+        let uri = Url::from_file_path(nested.join("case.hurl")).expect("uri");
+
+        let picked = pick_variable_file(&uri).expect("picked");
+        assert_eq!(
+            picked.file_name().and_then(|n| n.to_str()),
+            Some("vars.env")
+        );
 
         let _ = fs::remove_dir_all(base);
     }

@@ -1,12 +1,12 @@
 use crate::{
-    code_lens::{code_lenses, NOOP_COMMAND, RUN_ENTRY_COMMAND},
+    code_lens::{code_lenses, NOOP_COMMAND, RUN_ENTRY_COMMAND, RUN_ENTRY_WITH_VARS_COMMAND},
     completion::completions_with_external,
     definition::definition_with_external,
     diagnostics::collect_diagnostics_with_external,
     formatting::format_document,
     hover::hover_with_external,
     symbols::document_symbols,
-    variables::load_workspace_variables,
+    variables::{load_workspace_variables, pick_variable_file},
 };
 use dashmap::DashMap;
 use std::collections::{BTreeMap, BTreeSet};
@@ -82,7 +82,11 @@ impl LanguageServer for Backend {
                     resolve_provider: Some(false),
                 }),
                 execute_command_provider: Some(ExecuteCommandOptions {
-                    commands: vec![RUN_ENTRY_COMMAND.to_string(), NOOP_COMMAND.to_string()],
+                    commands: vec![
+                        RUN_ENTRY_COMMAND.to_string(),
+                        RUN_ENTRY_WITH_VARS_COMMAND.to_string(),
+                        NOOP_COMMAND.to_string(),
+                    ],
                     work_done_progress_options: WorkDoneProgressOptions::default(),
                 }),
                 ..Default::default()
@@ -222,7 +226,7 @@ impl LanguageServer for Backend {
         if params.command == NOOP_COMMAND {
             return Ok(None);
         }
-        if params.command != RUN_ENTRY_COMMAND {
+        if params.command != RUN_ENTRY_COMMAND && params.command != RUN_ENTRY_WITH_VARS_COMMAND {
             return Ok(None);
         }
         let arguments = params.arguments;
@@ -248,7 +252,22 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        let output = TokioCommand::new("hurl").arg(&path).output().await;
+        let mut cmd = TokioCommand::new("hurl");
+        cmd.arg(&path);
+        if params.command == RUN_ENTRY_WITH_VARS_COMMAND {
+            if let Some(vars_file) = pick_variable_file(&uri) {
+                cmd.arg("--variables-file").arg(vars_file);
+            } else {
+                self.client
+                    .show_message(
+                        MessageType::WARNING,
+                        "No variable file found (.hurl-vars, vars.env, hurl.env, .env). Running without vars file.",
+                    )
+                    .await;
+            }
+        }
+
+        let output = cmd.output().await;
         match output {
             Ok(output) if output.status.success() => {
                 let stdout = String::from_utf8_lossy(&output.stdout);

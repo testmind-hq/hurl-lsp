@@ -2,6 +2,7 @@ use crate::diagnostics::parse_document;
 use tower_lsp::lsp_types::{CodeLens, Command, Position, Range, Url};
 
 pub const RUN_ENTRY_COMMAND: &str = "hurl.runEntry";
+pub const RUN_ENTRY_WITH_VARS_COMMAND: &str = "hurl.runEntryWithVars";
 pub const NOOP_COMMAND: &str = "hurl.noop";
 
 pub fn code_lenses(uri: &Url, text: &str) -> Vec<CodeLens> {
@@ -40,7 +41,19 @@ pub fn code_lenses(uri: &Url, text: &str) -> Vec<CodeLens> {
                 }),
                 data: None,
             };
-            [summary, run]
+            let run_with_vars = CodeLens {
+                range,
+                command: Some(Command {
+                    title: "⚡ Run with vars".to_string(),
+                    command: RUN_ENTRY_WITH_VARS_COMMAND.to_string(),
+                    arguments: Some(vec![
+                        serde_json::Value::String(uri.to_string()),
+                        serde_json::Value::Number((entry.line as u64).into()),
+                    ]),
+                }),
+                data: None,
+            };
+            [summary, run, run_with_vars]
         })
         .collect::<Vec<_>>()
         .into_iter()
@@ -86,7 +99,7 @@ mod tests {
         let uri = Url::parse("file:///tmp/test.hurl").expect("uri");
         let text = "GET /users\nHTTP 200\n[Headers]\na: b\n[Asserts]\nstatus == 200\n";
         let lenses = code_lenses(&uri, text);
-        assert_eq!(lenses.len(), 2);
+        assert_eq!(lenses.len(), 3);
         assert!(lenses[0]
             .command
             .as_ref()
@@ -96,6 +109,10 @@ mod tests {
         assert_eq!(
             lenses[1].command.as_ref().expect("run").command,
             RUN_ENTRY_COMMAND
+        );
+        assert_eq!(
+            lenses[2].command.as_ref().expect("run vars").command,
+            RUN_ENTRY_WITH_VARS_COMMAND
         );
     }
 }
