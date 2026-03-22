@@ -3,6 +3,7 @@ mod code_lens;
 mod completion;
 mod definition;
 mod diagnostics;
+mod execution;
 mod formatting;
 mod hover;
 mod metadata;

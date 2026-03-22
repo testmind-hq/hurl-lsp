@@ -87,6 +87,8 @@ Per-request Code Lens is available with:
 
 When `openapi.yaml` / `openapi.yml` / `swagger.yaml` / `swagger.yml` / `swagger.json` is present in the workspace hierarchy,
 request lines can use OpenAPI `paths` keys for URL completion.
+For mapped operations, request body field names from OpenAPI `requestBody.content.application/json.schema.properties`
+are also suggested inside JSON request bodies.
 
 ### Built-in Formatter
 
@@ -222,8 +224,8 @@ CI result feedback integration from TestMind is a future phase and is not implem
 
 - [x] Variable file integration (workspace env files + cross-file resolution)
 - [~] Code Lens — run/run-with-vars/copy-as-curl implemented; clipboard integration and inline result rendering pending
-- [ ] Inline execution result display
-- [~] OpenAPI / Swagger integration (path completion implemented, schema/body/assert generation pending)
+- [~] Inline execution result display (run failures now map to assert-line diagnostics; rich per-assert actual-value rendering pending)
+- [~] OpenAPI / Swagger integration (path + request-body-field completion implemented, schema/assert generation pending)
 - [x] Document outline with metadata support (`documentSymbol`)
 - [ ] Chain case detection and dependency annotation
 

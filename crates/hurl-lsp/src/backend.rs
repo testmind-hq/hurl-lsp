@@ -6,9 +6,10 @@ use crate::{
     completion::completions_with_external,
     definition::definition_with_external,
     diagnostics::collect_diagnostics_with_external,
+    execution::execution_diagnostics_for_entry_failure,
     formatting::format_document,
     hover::hover_with_external,
-    openapi::load_openapi_paths_with_roots,
+    openapi::{load_openapi_paths_with_roots, load_openapi_request_body_fields_with_roots},
     symbols::document_symbols,
     variables::{load_workspace_variables_with_roots, pick_variable_file_with_roots},
 };
@@ -45,6 +46,7 @@ impl DocumentStore {
 pub struct Backend {
     client: Client,
     documents: Arc<DocumentStore>,
+    execution_diagnostics: DashMap<Url, Vec<Diagnostic>>,
     workspace_roots: Arc<RwLock<Vec<PathBuf>>>,
 }
 
@@ -53,6 +55,7 @@ impl Backend {
         Self {
             client,
             documents: Arc::new(DocumentStore::default()),
+            execution_diagnostics: DashMap::new(),
             workspace_roots: Arc::new(RwLock::new(Vec::new())),
         }
     }
@@ -69,11 +72,24 @@ impl Backend {
         let roots = self.workspace_roots().await;
         let external = load_workspace_variables_with_roots(&uri, &roots);
         let external_names: BTreeSet<String> = external.into_iter().map(|item| item.name).collect();
-        let diagnostics = collect_diagnostics_with_external(text, &external_names);
+        let mut diagnostics = collect_diagnostics_with_external(text, &external_names);
+        if let Some(execution) = self.execution_diagnostics.get(&uri) {
+            diagnostics.extend(execution.iter().cloned());
+        }
         self.client
             .publish_diagnostics(uri, diagnostics, None)
             .await;
     }
+}
+
+fn apply_document_change(
+    documents: &DocumentStore,
+    execution_diagnostics: &DashMap<Url, Vec<Diagnostic>>,
+    uri: Url,
+    text: String,
+) {
+    execution_diagnostics.remove(&uri);
+    documents.insert(uri, text);
 }
 
 #[tower_lsp::async_trait]
@@ -135,13 +151,19 @@ impl LanguageServer for Backend {
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         if let Some(change) = params.content_changes.into_iter().next() {
             let uri = params.text_document.uri;
-            self.documents.insert(uri.clone(), change.text.clone());
+            apply_document_change(
+                &self.documents,
+                &self.execution_diagnostics,
+                uri.clone(),
+                change.text.clone(),
+            );
             self.publish_diagnostics(uri, &change.text).await;
         }
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         self.documents.remove(&params.text_document.uri);
+        self.execution_diagnostics.remove(&params.text_document.uri);
         self.client
             .publish_diagnostics(params.text_document.uri, Vec::new(), None)
             .await;
@@ -156,12 +178,14 @@ impl LanguageServer for Backend {
         let external = load_workspace_variables_with_roots(&uri, &roots);
         let external_names: BTreeSet<String> = external.into_iter().map(|item| item.name).collect();
         let openapi_paths = load_openapi_paths_with_roots(&uri, &roots);
+        let openapi_body_fields = load_openapi_request_body_fields_with_roots(&uri, &roots);
 
         Ok(Some(CompletionResponse::Array(completions_with_external(
             &text,
             params.text_document_position.position,
             &external_names,
             &openapi_paths,
+            &openapi_body_fields,
         ))))
     }
 
@@ -349,6 +373,7 @@ impl LanguageServer for Backend {
         let output = cmd.output().await;
         match output {
             Ok(output) if output.status.success() => {
+                self.execution_diagnostics.remove(&uri);
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let message = if stdout.trim().is_empty() {
                     "hurl run succeeded for selected entry.".to_string()
@@ -356,6 +381,7 @@ impl LanguageServer for Backend {
                     format!("hurl run succeeded:\n{}", truncate_message(stdout.as_ref()))
                 };
                 self.client.show_message(MessageType::INFO, message).await;
+                self.publish_diagnostics(uri, &text).await;
             }
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -364,17 +390,27 @@ impl LanguageServer for Backend {
                 } else {
                     truncate_message(stderr.as_ref())
                 };
+                self.execution_diagnostics.insert(
+                    uri.clone(),
+                    execution_diagnostics_for_entry_failure(&text, line as u32, &detail),
+                );
                 self.client
                     .show_message(MessageType::ERROR, format!("hurl run failed: {detail}"))
                     .await;
+                self.publish_diagnostics(uri, &text).await;
             }
             Err(error) => {
+                self.execution_diagnostics.insert(
+                    uri.clone(),
+                    execution_diagnostics_for_entry_failure(&text, line as u32, &error.to_string()),
+                );
                 self.client
                     .show_message(
                         MessageType::ERROR,
                         format!("Failed to execute hurl: {error}"),
                     )
                     .await;
+                self.publish_diagnostics(uri, &text).await;
             }
         }
         Ok(None)
@@ -424,4 +460,27 @@ fn position_for_end(text: &str) -> Position {
     }
 
     Position::new(line, character)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apply_document_change_clears_execution_diagnostics() {
+        let documents = DocumentStore::default();
+        let execution_diagnostics = DashMap::new();
+        let uri = Url::parse("file:///tmp/test.hurl").expect("uri");
+        execution_diagnostics.insert(uri.clone(), vec![Diagnostic::default()]);
+
+        apply_document_change(
+            &documents,
+            &execution_diagnostics,
+            uri.clone(),
+            "GET /health".to_string(),
+        );
+
+        assert!(execution_diagnostics.get(&uri).is_none());
+        assert_eq!(documents.get(&uri).as_deref(), Some("GET /health"));
+    }
 }
