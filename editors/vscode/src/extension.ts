@@ -33,7 +33,11 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
 
   if (!command) {
     try {
-      command = await ensureBinary(context);
+      const binaryVersion = String(context.extension.packageJSON.version ?? "").trim();
+      if (!binaryVersion) {
+        throw new Error("Missing extension version for release binary resolution.");
+      }
+      command = await ensureBinary(context, binaryVersion);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       void vscode.window.showErrorMessage(

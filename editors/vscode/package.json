@@ -7,11 +7,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yuchou87/hurl-lsp.git"
+    "url": "https://github.com/testmind-hq/hurl-lsp.git"
   },
-  "homepage": "https://github.com/yuchou87/hurl-lsp",
+  "homepage": "https://github.com/testmind-hq/hurl-lsp",
   "bugs": {
-    "url": "https://github.com/yuchou87/hurl-lsp/issues"
+    "url": "https://github.com/testmind-hq/hurl-lsp/issues"
   },
   "engines": {
     "vscode": "^1.90.0"
