@@ -1,15 +1,18 @@
 use crate::{
     code_lens::{
-        build_curl_for_entry, code_lenses, extract_entry_text, COPY_AS_CURL_COMMAND, NOOP_COMMAND,
-        RUN_ENTRY_COMMAND, RUN_ENTRY_WITH_VARS_COMMAND,
+        build_curl_for_entry, code_lenses_with_context, extract_entry_text, COPY_AS_CURL_COMMAND,
+        NOOP_COMMAND, RUN_ENTRY_COMMAND, RUN_ENTRY_WITH_VARS_COMMAND,
     },
     completion::completions_with_external,
     definition::definition_with_external,
     diagnostics::collect_diagnostics_with_external,
-    execution::execution_diagnostics_for_entry_failure,
+    execution::{execution_diagnostics_for_entry_failure, parse_run_summary, RunSummary},
     formatting::format_document,
     hover::hover_with_external,
-    openapi::{load_openapi_paths_with_roots, load_openapi_request_body_fields_with_roots},
+    openapi::{
+        load_openapi_paths_with_roots, load_openapi_request_body_fields_with_roots,
+        load_openapi_response_fields_with_roots,
+    },
     symbols::document_symbols,
     variables::{load_workspace_variables_with_roots, pick_variable_file_with_roots},
 };
@@ -47,6 +50,7 @@ pub struct Backend {
     client: Client,
     documents: Arc<DocumentStore>,
     execution_diagnostics: DashMap<Url, Vec<Diagnostic>>,
+    execution_summaries: DashMap<Url, BTreeMap<u32, RunSummary>>,
     workspace_roots: Arc<RwLock<Vec<PathBuf>>>,
 }
 
@@ -56,6 +60,7 @@ impl Backend {
             client,
             documents: Arc::new(DocumentStore::default()),
             execution_diagnostics: DashMap::new(),
+            execution_summaries: DashMap::new(),
             workspace_roots: Arc::new(RwLock::new(Vec::new())),
         }
     }
@@ -85,11 +90,28 @@ impl Backend {
 fn apply_document_change(
     documents: &DocumentStore,
     execution_diagnostics: &DashMap<Url, Vec<Diagnostic>>,
+    execution_summaries: &DashMap<Url, BTreeMap<u32, RunSummary>>,
     uri: Url,
     text: String,
 ) {
     execution_diagnostics.remove(&uri);
+    execution_summaries.remove(&uri);
     documents.insert(uri, text);
+}
+
+fn apply_run_summary(
+    execution_summaries: &DashMap<Url, BTreeMap<u32, RunSummary>>,
+    uri: &Url,
+    line: u32,
+    summary: RunSummary,
+) {
+    if let Some(mut existing) = execution_summaries.get_mut(uri) {
+        existing.insert(line, summary);
+    } else {
+        let mut value = BTreeMap::new();
+        value.insert(line, summary);
+        execution_summaries.insert(uri.clone(), value);
+    }
 }
 
 #[tower_lsp::async_trait]
@@ -154,6 +176,7 @@ impl LanguageServer for Backend {
             apply_document_change(
                 &self.documents,
                 &self.execution_diagnostics,
+                &self.execution_summaries,
                 uri.clone(),
                 change.text.clone(),
             );
@@ -164,6 +187,7 @@ impl LanguageServer for Backend {
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         self.documents.remove(&params.text_document.uri);
         self.execution_diagnostics.remove(&params.text_document.uri);
+        self.execution_summaries.remove(&params.text_document.uri);
         self.client
             .publish_diagnostics(params.text_document.uri, Vec::new(), None)
             .await;
@@ -179,6 +203,7 @@ impl LanguageServer for Backend {
         let external_names: BTreeSet<String> = external.into_iter().map(|item| item.name).collect();
         let openapi_paths = load_openapi_paths_with_roots(&uri, &roots);
         let openapi_body_fields = load_openapi_request_body_fields_with_roots(&uri, &roots);
+        let openapi_response_fields = load_openapi_response_fields_with_roots(&uri, &roots);
 
         Ok(Some(CompletionResponse::Array(completions_with_external(
             &text,
@@ -186,6 +211,7 @@ impl LanguageServer for Backend {
             &external_names,
             &openapi_paths,
             &openapi_body_fields,
+            &openapi_response_fields,
         ))))
     }
 
@@ -242,7 +268,12 @@ impl LanguageServer for Backend {
         let Some(text) = self.document_text(&uri) else {
             return Ok(None);
         };
-        Ok(Some(code_lenses(&uri, &text)))
+        let run_summaries = self
+            .execution_summaries
+            .get(&uri)
+            .map(|item| item.clone())
+            .unwrap_or_default();
+        Ok(Some(code_lenses_with_context(&uri, &text, &run_summaries)))
     }
 
     async fn goto_definition(
@@ -375,6 +406,13 @@ impl LanguageServer for Backend {
             Ok(output) if output.status.success() => {
                 self.execution_diagnostics.remove(&uri);
                 let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                apply_run_summary(
+                    &self.execution_summaries,
+                    &uri,
+                    line as u32,
+                    parse_run_summary(stderr.as_ref(), stdout.as_ref(), true),
+                );
                 let message = if stdout.trim().is_empty() {
                     "hurl run succeeded for selected entry.".to_string()
                 } else {
@@ -394,15 +432,28 @@ impl LanguageServer for Backend {
                     uri.clone(),
                     execution_diagnostics_for_entry_failure(&text, line as u32, &detail),
                 );
+                apply_run_summary(
+                    &self.execution_summaries,
+                    &uri,
+                    line as u32,
+                    parse_run_summary(stderr.as_ref(), "", false),
+                );
                 self.client
                     .show_message(MessageType::ERROR, format!("hurl run failed: {detail}"))
                     .await;
                 self.publish_diagnostics(uri, &text).await;
             }
             Err(error) => {
+                let err_text = error.to_string();
                 self.execution_diagnostics.insert(
                     uri.clone(),
-                    execution_diagnostics_for_entry_failure(&text, line as u32, &error.to_string()),
+                    execution_diagnostics_for_entry_failure(&text, line as u32, &err_text),
+                );
+                apply_run_summary(
+                    &self.execution_summaries,
+                    &uri,
+                    line as u32,
+                    parse_run_summary(&err_text, "", false),
                 );
                 self.client
                     .show_message(
@@ -470,17 +521,21 @@ mod tests {
     fn apply_document_change_clears_execution_diagnostics() {
         let documents = DocumentStore::default();
         let execution_diagnostics = DashMap::new();
+        let execution_summaries = DashMap::new();
         let uri = Url::parse("file:///tmp/test.hurl").expect("uri");
         execution_diagnostics.insert(uri.clone(), vec![Diagnostic::default()]);
+        execution_summaries.insert(uri.clone(), BTreeMap::from([(0, RunSummary::default())]));
 
         apply_document_change(
             &documents,
             &execution_diagnostics,
+            &execution_summaries,
             uri.clone(),
             "GET /health".to_string(),
         );
 
         assert!(execution_diagnostics.get(&uri).is_none());
+        assert!(execution_summaries.get(&uri).is_none());
         assert_eq!(documents.get(&uri).as_deref(), Some("GET /health"));
     }
 }
