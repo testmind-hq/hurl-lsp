@@ -63,7 +63,9 @@ jobs:
             throw "Cannot find vcpkg installation root."
           }
           & "$vcpkgRoot\vcpkg.exe" install libxml2:x64-windows
-          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "VCPKG_ROOT=$vcpkgRoot" >> $env:GITHUB_ENV
+          "VCPKGRS_TRIPLET=x64-windows" >> $env:GITHUB_ENV
+          "VCPKGRS_DYNAMIC=1" >> $env:GITHUB_ENV
       - name: Build
         run: cargo build --release --package hurl-lsp --target ${{ matrix.target }}
       - name: Package
