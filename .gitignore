@@ -23,3 +23,7 @@ target
 # Superpowers process artifacts (do not commit)
 docs/superpowers/specs/
 docs/plans/
+
+# VSCode extension generated artifacts
+editors/vscode/node_modules/
+editors/vscode/out/
