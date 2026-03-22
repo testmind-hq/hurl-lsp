@@ -187,6 +187,14 @@ fn json_body_key_prefix(prefix: &str) -> Option<&str> {
     if tail.contains('"') {
         return None;
     }
+    let before = prefix[..idx].trim_end();
+    if before.trim().is_empty() {
+        return Some(tail);
+    }
+    let prev = before.chars().last()?;
+    if prev != '{' && prev != ',' {
+        return None;
+    }
     Some(tail)
 }
 
@@ -304,6 +312,24 @@ mod tests {
         );
         assert!(items.iter().any(|item| item.label == "email"));
         assert!(!items.iter().any(|item| item.label == "age"));
+    }
+
+    #[test]
+    fn does_not_return_openapi_body_field_completion_inside_string_value() {
+        let text = "POST /users\n{\n  \"note\": \"e\n}\nHTTP 201\n";
+        let mut fields = BTreeMap::new();
+        let mut props = BTreeSet::new();
+        props.insert("email".to_string());
+        fields.insert("POST /users".to_string(), props);
+
+        let items = completions_with_external(
+            text,
+            Position::new(2, 13),
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            &fields,
+        );
+        assert!(!items.iter().any(|item| item.label == "email"));
     }
 
     #[test]

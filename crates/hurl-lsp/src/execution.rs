@@ -19,6 +19,7 @@ pub fn execution_diagnostics_for_entry_failure(
     entry_line: u32,
     detail: &str,
 ) -> Vec<Diagnostic> {
+    let failed_assert = parse_failed_assert(detail);
     let mut diagnostics = Vec::new();
     let mut in_entry = false;
     let mut in_asserts = false;
@@ -45,19 +46,36 @@ pub fn execution_diagnostics_for_entry_failure(
             continue;
         }
 
-        diagnostics.push(Diagnostic {
-            range: Range::new(Position::new(line_no, 0), Position::new(line_no, 1)),
-            severity: Some(DiagnosticSeverity::ERROR),
-            source: Some("hurl-lsp-run".to_string()),
-            message: format!("Run failed: {detail}"),
-            ..Default::default()
-        });
+        if let Some(expected) = failed_assert {
+            if !trimmed.contains(expected) {
+                continue;
+            }
+        }
+
+        diagnostics.push(failure_diag(line_no, detail));
     }
 
     if diagnostics.is_empty() {
         return execution_diagnostics_for_result(entry_line, false, detail);
     }
     diagnostics
+}
+
+fn parse_failed_assert(detail: &str) -> Option<&str> {
+    detail
+        .split_once("assert failed:")
+        .map(|(_, suffix)| suffix.trim())
+        .filter(|value| !value.is_empty())
+}
+
+fn failure_diag(line: u32, detail: &str) -> Diagnostic {
+    Diagnostic {
+        range: Range::new(Position::new(line, 0), Position::new(line, 1)),
+        severity: Some(DiagnosticSeverity::ERROR),
+        source: Some("hurl-lsp-run".to_string()),
+        message: format!("Run failed: {detail}"),
+        ..Default::default()
+    }
 }
 
 #[cfg(test)]
@@ -80,8 +98,7 @@ mod tests {
         let source = "POST /users\nHTTP 201\n[Asserts]\nstatus == 201\njsonpath \"$.id\" exists\n";
         let diagnostics =
             execution_diagnostics_for_entry_failure(source, 0, "assert failed: status == 201");
-        assert_eq!(diagnostics.len(), 2);
+        assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].range.start.line, 3);
-        assert_eq!(diagnostics[1].range.start.line, 4);
     }
 }

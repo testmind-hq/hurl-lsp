@@ -141,6 +141,7 @@ impl LanguageServer for Backend {
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         if let Some(change) = params.content_changes.into_iter().next() {
             let uri = params.text_document.uri;
+            self.execution_diagnostics.remove(&uri);
             self.documents.insert(uri.clone(), change.text.clone());
             self.publish_diagnostics(uri, &change.text).await;
         }
