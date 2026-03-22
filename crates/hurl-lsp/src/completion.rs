@@ -1,10 +1,9 @@
 use crate::syntax::{
     is_identifier, method_from_line, section_label, section_name_from_line,
-    visible_variables_before_line, SECTION_NAMES,
+    visible_variables_before_line, HTTP_METHODS, SECTION_NAMES,
 };
 use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind, Position};
 
-const METHODS: &[&str] = &["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 const ASSERTS: &[(&str, &str)] = &[
     ("jsonpath", "jsonpath \"$.field\" == value"),
     ("xpath", "xpath \"//node\" exists"),
@@ -68,7 +67,10 @@ pub fn completions(text: &str, position: Position) -> Vec<CompletionItem> {
             .collect();
     }
 
-    METHODS.iter().map(|method| keyword_item(method)).collect()
+    HTTP_METHODS
+        .iter()
+        .map(|method| keyword_item(method))
+        .collect()
 }
 
 fn keyword_item(value: &str) -> CompletionItem {
@@ -106,7 +108,7 @@ fn looks_like_request_start(line: &str) -> bool {
     if token.is_empty() || !token.chars().all(|ch| ch.is_ascii_uppercase()) {
         return false;
     }
-    METHODS.iter().any(|method| method.starts_with(token))
+    HTTP_METHODS.iter().any(|method| method.starts_with(token))
 }
 
 fn variable_prefix(prefix: &str) -> Option<&str> {
@@ -175,5 +177,13 @@ mod tests {
         let items = completions(text, Position::new(5, 2));
         assert!(!items.iter().any(|item| item.label == "jsonpath"));
         assert!(items.iter().any(|item| item.label == "GET"));
+    }
+
+    #[test]
+    fn exits_assert_context_on_partial_connect_line() {
+        let text = "GET /a\nHTTP 200\n[Asserts]\njsonpath \"$.id\" == 1\n\nCON";
+        let items = completions(text, Position::new(5, 3));
+        assert!(!items.iter().any(|item| item.label == "jsonpath"));
+        assert!(items.iter().any(|item| item.label == "CONNECT"));
     }
 }
