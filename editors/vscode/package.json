@@ -2,7 +2,7 @@
   "name": "vscode-hurl",
   "displayName": "Hurl",
   "description": "VSCode support for Hurl powered by hurl-lsp",
-  "version": "0.1.0",
+  "version": "0.1.5",
   "publisher": "yuchou87",
   "license": "MIT",
   "repository": {
@@ -19,7 +19,8 @@
   "categories": ["Programming Languages"],
   "activationEvents": [
     "onLanguage:hurl",
-    "onCommand:hurl.restartLanguageServer"
+    "onCommand:hurl.restartLanguageServer",
+    "onCommand:hurl.showLog"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -64,6 +65,10 @@
       {
         "command": "hurl.restartLanguageServer",
         "title": "Hurl: Restart Language Server"
+      },
+      {
+        "command": "hurl.showLog",
+        "title": "Hurl: Show Log"
       }
     ]
   },

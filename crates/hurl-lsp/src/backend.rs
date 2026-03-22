@@ -1,7 +1,8 @@
 use crate::{
     code_lens::{
         build_curl_for_entry, code_lenses_with_context, extract_entry_text, COPY_AS_CURL_COMMAND,
-        NOOP_COMMAND, RUN_ENTRY_COMMAND, RUN_ENTRY_WITH_VARS_COMMAND,
+        NOOP_COMMAND, RUN_CHAIN_COMMAND, RUN_ENTRY_COMMAND, RUN_ENTRY_WITH_VARS_COMMAND,
+        RUN_FILE_COMMAND,
     },
     completion::completions_with_external,
     definition::definition_with_external,
@@ -9,15 +10,17 @@ use crate::{
     execution::{execution_diagnostics_for_entry_failure, parse_run_summary, RunSummary},
     formatting::format_document,
     hover::hover_with_external,
+    metadata::{infer_entry_dependencies, HurlMetaParser},
     openapi::{
         load_openapi_paths_with_roots, load_openapi_request_body_fields_with_roots,
         load_openapi_response_fields_with_roots,
     },
     symbols::document_symbols,
+    syntax::method_from_line,
     variables::{load_workspace_variables_with_roots, pick_variable_file_with_roots},
 };
 use dashmap::DashMap;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -25,6 +28,7 @@ use tempfile::NamedTempFile;
 use tokio::process::Command as TokioCommand;
 use tokio::sync::RwLock;
 use tower_lsp::{jsonrpc::Result, lsp_types::*, Client, LanguageServer};
+use tracing::{error, info, warn};
 use url::Url;
 
 #[derive(Default)]
@@ -85,6 +89,12 @@ impl Backend {
             .publish_diagnostics(uri, diagnostics, None)
             .await;
     }
+
+    async fn log_execution(&self, message: impl Into<String>) {
+        let text = message.into();
+        info!("{text}");
+        self.client.log_message(MessageType::INFO, text).await;
+    }
 }
 
 fn apply_document_change(
@@ -114,6 +124,76 @@ fn apply_run_summary(
     }
 }
 
+fn extract_file_text(text: &str) -> Option<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let first = lines
+        .iter()
+        .position(|line| method_from_line(line.trim()).is_some())?;
+    let last = lines
+        .iter()
+        .rposition(|line| method_from_line(line.trim()).is_some())?;
+    let mut end = lines.len();
+    for (idx, line) in lines.iter().enumerate().skip(last + 1) {
+        if method_from_line(line.trim()).is_some() {
+            end = idx;
+            break;
+        }
+    }
+    Some(lines[first..end].join("\n"))
+}
+
+fn extract_chain_text(text: &str, entry_line: usize) -> Option<String> {
+    let meta = HurlMetaParser::parse(text);
+    let deps = infer_entry_dependencies(text, &meta);
+    let parsed = crate::diagnostics::parse_document(text);
+    let mut entry_lines: Vec<usize> = parsed
+        .entries
+        .iter()
+        .map(|entry| entry.line as usize)
+        .collect();
+    entry_lines.sort_unstable();
+    if !entry_lines.contains(&entry_line) {
+        return None;
+    }
+
+    let mut parents = BTreeMap::<usize, BTreeSet<usize>>::new();
+    for dep in deps {
+        parents
+            .entry(dep.to_line as usize)
+            .or_default()
+            .insert(dep.from_line as usize);
+    }
+
+    let mut needed = BTreeSet::<usize>::new();
+    let mut queue = VecDeque::from([entry_line]);
+    while let Some(line) = queue.pop_front() {
+        if !needed.insert(line) {
+            continue;
+        }
+        if let Some(incoming) = parents.get(&line) {
+            for parent in incoming {
+                queue.push_back(*parent);
+            }
+        }
+    }
+
+    let mut blocks = Vec::new();
+    for line in entry_lines {
+        if !needed.contains(&line) {
+            continue;
+        }
+        let Some(block) = extract_entry_text(text, line) else {
+            continue;
+        };
+        blocks.push(block);
+    }
+    if blocks.is_empty() {
+        None
+    } else {
+        Some(blocks.join("\n\n"))
+    }
+}
+
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
@@ -139,6 +219,8 @@ impl LanguageServer for Backend {
                     commands: vec![
                         RUN_ENTRY_COMMAND.to_string(),
                         RUN_ENTRY_WITH_VARS_COMMAND.to_string(),
+                        RUN_CHAIN_COMMAND.to_string(),
+                        RUN_FILE_COMMAND.to_string(),
                         COPY_AS_CURL_COMMAND.to_string(),
                         NOOP_COMMAND.to_string(),
                     ],
@@ -154,6 +236,7 @@ impl LanguageServer for Backend {
     }
 
     async fn initialized(&self, _: InitializedParams) {
+        info!("hurl-lsp initialized");
         self.client
             .log_message(MessageType::INFO, "hurl-lsp initialized")
             .await;
@@ -305,6 +388,8 @@ impl LanguageServer for Backend {
         }
         if params.command != RUN_ENTRY_COMMAND
             && params.command != RUN_ENTRY_WITH_VARS_COMMAND
+            && params.command != RUN_CHAIN_COMMAND
+            && params.command != RUN_FILE_COMMAND
             && params.command != COPY_AS_CURL_COMMAND
         {
             return Ok(None);
@@ -349,14 +434,43 @@ impl LanguageServer for Backend {
         let Some(text) = self.document_text(&uri) else {
             return Ok(None);
         };
-        let Some(entry_text) = extract_entry_text(&text, line) else {
-            self.client
-                .show_message(
-                    MessageType::WARNING,
-                    "Unable to resolve request entry for run command.",
-                )
-                .await;
-            return Ok(None);
+        let run_target = if params.command == RUN_FILE_COMMAND {
+            "file"
+        } else if params.command == RUN_CHAIN_COMMAND {
+            "chain"
+        } else {
+            "entry"
+        };
+        let entry_text = if params.command == RUN_FILE_COMMAND {
+            let Some(value) = extract_file_text(&text) else {
+                self.client
+                    .show_message(MessageType::WARNING, "Unable to resolve file run scope.")
+                    .await;
+                return Ok(None);
+            };
+            value
+        } else if params.command == RUN_CHAIN_COMMAND {
+            let Some(value) = extract_chain_text(&text, line) else {
+                self.client
+                    .show_message(
+                        MessageType::WARNING,
+                        "Unable to resolve chain for this entry. Try Run file instead.",
+                    )
+                    .await;
+                return Ok(None);
+            };
+            value
+        } else {
+            let Some(value) = extract_entry_text(&text, line) else {
+                self.client
+                    .show_message(
+                        MessageType::WARNING,
+                        "Unable to resolve request entry for run command.",
+                    )
+                    .await;
+                return Ok(None);
+            };
+            value
         };
         let temp_file = uri.to_file_path().ok().and_then(|path| {
             path.parent()
@@ -392,6 +506,7 @@ impl LanguageServer for Backend {
             if let Some(vars_file) = pick_variable_file_with_roots(&uri, &roots) {
                 cmd.arg("--variables-file").arg(vars_file);
             } else {
+                warn!("no variable file found for {}", uri);
                 self.client
                     .show_message(
                         MessageType::WARNING,
@@ -400,6 +515,11 @@ impl LanguageServer for Backend {
                     .await;
             }
         }
+        self.log_execution(format!(
+            "hurl run started ({run_target}) for {} at line {}",
+            uri, line
+        ))
+        .await;
 
         let output = cmd.output().await;
         match output {
@@ -418,6 +538,8 @@ impl LanguageServer for Backend {
                 } else {
                     format!("hurl run succeeded:\n{}", truncate_message(stdout.as_ref()))
                 };
+                self.log_execution(format!("hurl run succeeded ({run_target}) for {}", uri))
+                    .await;
                 self.client.show_message(MessageType::INFO, message).await;
                 self.publish_diagnostics(uri, &text).await;
             }
@@ -439,6 +561,12 @@ impl LanguageServer for Backend {
                     line as u32,
                     parse_run_summary(stderr.as_ref(), stdout.as_ref(), false),
                 );
+                error!("hurl run failed ({run_target}) for {}: {}", uri, detail);
+                self.log_execution(format!(
+                    "hurl run failed ({run_target}) for {}: {}",
+                    uri, detail
+                ))
+                .await;
                 self.client
                     .show_message(MessageType::ERROR, format!("hurl run failed: {detail}"))
                     .await;
@@ -456,6 +584,15 @@ impl LanguageServer for Backend {
                     line as u32,
                     parse_run_summary(&err_text, "", false),
                 );
+                error!(
+                    "failed to execute hurl ({run_target}) for {}: {}",
+                    uri, error
+                );
+                self.log_execution(format!(
+                    "failed to execute hurl ({run_target}) for {}: {}",
+                    uri, error
+                ))
+                .await;
                 self.client
                     .show_message(
                         MessageType::ERROR,
@@ -538,5 +675,20 @@ mod tests {
         assert!(execution_diagnostics.get(&uri).is_none());
         assert!(execution_summaries.get(&uri).is_none());
         assert_eq!(documents.get(&uri).as_deref(), Some("GET /health"));
+    }
+
+    #[test]
+    fn extracts_chain_text_with_dependencies() {
+        let text = "# step_id=setup\nPOST /users\nHTTP 201\n[Captures]\nuser_id: jsonpath \"$.id\"\n\n# step_id=test\nGET /users/{{user_id}}\nHTTP 200\n";
+        let chain = extract_chain_text(text, 7).expect("chain");
+        assert!(chain.contains("POST /users"));
+        assert!(chain.contains("GET /users/{{user_id}}"));
+    }
+
+    #[test]
+    fn extracts_file_text_from_first_request() {
+        let text = "# header\n\nGET /health\nHTTP 200\n";
+        let file_text = extract_file_text(text).expect("file text");
+        assert_eq!(file_text, "GET /health\nHTTP 200");
     }
 }

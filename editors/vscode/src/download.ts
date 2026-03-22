@@ -8,10 +8,16 @@ import type { ExtensionContext } from "vscode";
 const REPO = "testmind-hq/hurl-lsp";
 
 export async function ensureBinary(context: ExtensionContext, binaryVersion: string): Promise<string> {
-  const storageDir = path.join(context.globalStorageUri.fsPath, "bin");
-  const binaryPath = path.join(storageDir, binaryName());
+  const systemBinary = await resolveSystemBinary(binaryVersion);
+  if (systemBinary) {
+    return systemBinary;
+  }
 
-  await fs.promises.mkdir(storageDir, { recursive: true });
+  const storageDir = path.join(context.globalStorageUri.fsPath, "bin");
+  const versionedDir = path.join(storageDir, `v${binaryVersion}`);
+  const binaryPath = path.join(versionedDir, binaryName());
+
+  await fs.promises.mkdir(versionedDir, { recursive: true });
 
   if (fs.existsSync(binaryPath)) {
     return binaryPath;
@@ -21,15 +27,80 @@ export async function ensureBinary(context: ExtensionContext, binaryVersion: str
   const asset = releaseAssetForTarget(target);
   const archiveName = `hurl-lsp-${binaryVersion}-${target}.${asset.extension}`;
   const url = `https://github.com/${REPO}/releases/download/v${binaryVersion}/${archiveName}`;
-  const archivePath = path.join(storageDir, archiveName);
+  const archivePath = path.join(versionedDir, archiveName);
 
   await download(url, archivePath);
-  await extractArchive(archivePath, storageDir, asset.extension);
+  await extractArchive(archivePath, versionedDir, asset.extension);
   if (os.platform() !== "win32") {
     await fs.promises.chmod(binaryPath, 0o755);
   }
 
   return binaryPath;
+}
+
+async function resolveSystemBinary(targetVersion: string): Promise<string | undefined> {
+  const candidate = await findBinaryInPath();
+  if (!candidate) {
+    return undefined;
+  }
+  const installedVersion = await readBinaryVersion(candidate);
+  if (!installedVersion) {
+    return undefined;
+  }
+  return compareSemver(installedVersion, targetVersion) >= 0 ? candidate : undefined;
+}
+
+async function findBinaryInPath(): Promise<string | undefined> {
+  const command = os.platform() === "win32" ? "where" : "which";
+  const result = await spawnAndCapture(command, ["hurl-lsp"]);
+  if (result.code !== 0) {
+    return undefined;
+  }
+  const firstLine = result.stdout.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
+  return firstLine;
+}
+
+async function readBinaryVersion(binaryPath: string): Promise<string | undefined> {
+  const result = await spawnAndCapture(binaryPath, ["--version"]);
+  const text = `${result.stdout}\n${result.stderr}`;
+  const match = text.match(/\b(\d+\.\d+\.\d+)\b/);
+  return match?.[1];
+}
+
+function compareSemver(left: string, right: string): number {
+  const l = left.split(".").map((value) => Number.parseInt(value, 10));
+  const r = right.split(".").map((value) => Number.parseInt(value, 10));
+  for (let i = 0; i < 3; i += 1) {
+    const lv = Number.isFinite(l[i]) ? l[i] : 0;
+    const rv = Number.isFinite(r[i]) ? r[i] : 0;
+    if (lv !== rv) {
+      return lv - rv;
+    }
+  }
+  return 0;
+}
+
+function spawnAndCapture(
+  command: string,
+  args: string[],
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(command, args);
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on("error", (error) => {
+      resolve({ code: 1, stdout, stderr: String(error) });
+    });
+    child.on("close", (code) => {
+      resolve({ code: code ?? 1, stdout, stderr });
+    });
+  });
 }
 
 function binaryName(): string {
