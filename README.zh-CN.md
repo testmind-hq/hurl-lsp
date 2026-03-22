@@ -80,6 +80,8 @@ English README: [`README.md`](README.md)
 - 摘要行（method/path + section 统计）
 - `▶ Run`（执行当前请求块）
 - `⚡ Run with vars`（使用就近变量文件执行）
+- `⛓ Run chain`（执行当前请求及其依赖步骤）
+- `📄 Run file`（执行当前文件全部请求）
 - `📋 Copy as curl`（复制 curl）
 
 ### OpenAPI 联动补全
@@ -116,6 +118,14 @@ English README: [`README.md`](README.md)
 
 在 VS Marketplace 搜索 `hurl-lsp` / `Hurl` 安装。  
 也可使用 release 流水线产出的 `.vsix` 包安装。
+
+二进制解析顺序：
+
+1. 若配置了 `hurl.server.path`，优先使用该路径。
+2. 否则检查本机 `PATH` 中的 `hurl-lsp`，若版本 >= 扩展版本则直接复用。
+3. 否则自动下载与扩展版本匹配的 release 二进制。
+
+可通过命令 `Hurl: Show Log` 打开扩展/运行日志。
 
 ### Zed
 

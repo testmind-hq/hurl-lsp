@@ -8,6 +8,8 @@ use tower_lsp::lsp_types::{CodeLens, Command, Position, Range, Url};
 
 pub const RUN_ENTRY_COMMAND: &str = "hurl.runEntry";
 pub const RUN_ENTRY_WITH_VARS_COMMAND: &str = "hurl.runEntryWithVars";
+pub const RUN_CHAIN_COMMAND: &str = "hurl.runChain";
+pub const RUN_FILE_COMMAND: &str = "hurl.runFile";
 pub const COPY_AS_CURL_COMMAND: &str = "hurl.copyAsCurl";
 pub const NOOP_COMMAND: &str = "hurl.noop";
 
@@ -105,6 +107,30 @@ pub fn code_lenses_with_context(
                 }),
                 data: None,
             };
+            let run_chain = CodeLens {
+                range,
+                command: Some(Command {
+                    title: "⛓ Run chain".to_string(),
+                    command: RUN_CHAIN_COMMAND.to_string(),
+                    arguments: Some(vec![
+                        serde_json::Value::String(uri.to_string()),
+                        serde_json::Value::Number((entry.line as u64).into()),
+                    ]),
+                }),
+                data: None,
+            };
+            let run_file = CodeLens {
+                range,
+                command: Some(Command {
+                    title: "📄 Run file".to_string(),
+                    command: RUN_FILE_COMMAND.to_string(),
+                    arguments: Some(vec![
+                        serde_json::Value::String(uri.to_string()),
+                        serde_json::Value::Number((entry.line as u64).into()),
+                    ]),
+                }),
+                data: None,
+            };
             let copy_as_curl = CodeLens {
                 range,
                 command: Some(Command {
@@ -123,6 +149,8 @@ pub fn code_lenses_with_context(
             }
             items.push(run);
             items.push(run_with_vars);
+            items.push(run_chain);
+            items.push(run_file);
             items.push(copy_as_curl);
             items
         })
@@ -277,7 +305,7 @@ mod tests {
         let uri = Url::parse("file:///tmp/test.hurl").expect("uri");
         let text = "GET /users\nHTTP 200\n[Headers]\na: b\n[Asserts]\nstatus == 200\n";
         let lenses = code_lenses(&uri, text);
-        assert_eq!(lenses.len(), 4);
+        assert_eq!(lenses.len(), 6);
         assert!(lenses[0]
             .command
             .as_ref()
@@ -293,7 +321,15 @@ mod tests {
             RUN_ENTRY_WITH_VARS_COMMAND
         );
         assert_eq!(
-            lenses[3].command.as_ref().expect("copy").command,
+            lenses[3].command.as_ref().expect("run chain").command,
+            RUN_CHAIN_COMMAND
+        );
+        assert_eq!(
+            lenses[4].command.as_ref().expect("run file").command,
+            RUN_FILE_COMMAND
+        );
+        assert_eq!(
+            lenses[5].command.as_ref().expect("copy").command,
             COPY_AS_CURL_COMMAND
         );
     }

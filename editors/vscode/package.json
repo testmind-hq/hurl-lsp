@@ -2,7 +2,7 @@
   "name": "vscode-hurl",
   "displayName": "Hurl",
   "description": "VSCode support for Hurl powered by hurl-lsp",
-  "version": "0.1.0",
+  "version": "0.1.5",
   "publisher": "yuchou87",
   "license": "MIT",
   "repository": {
@@ -19,7 +19,9 @@
   "categories": ["Programming Languages"],
   "activationEvents": [
     "onLanguage:hurl",
-    "onCommand:hurl.restartLanguageServer"
+    "onCommand:hurl.restartLanguageServer",
+    "onCommand:hurl.showLog",
+    "onCommand:hurl.showRequestLog"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -57,6 +59,29 @@
           "enum": ["off", "messages", "verbose"],
           "default": "off",
           "description": "Trace LSP communication for debugging."
+        },
+        "hurl.run.verbosity": {
+          "type": "string",
+          "enum": ["verbose", "very-verbose"],
+          "default": "verbose",
+          "description": "Verbosity level for running hurl requests from CodeLens."
+        },
+        "hurl.run.log.clearOnRun": {
+          "type": "boolean",
+          "default": false,
+          "description": "Clear request log output before each new run."
+        },
+        "hurl.run.log.maxRuns": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "description": "Maximum number of recent runs kept in Hurl Request Log."
+        },
+        "hurl.run.log.maxCharsPerRun": {
+          "type": "number",
+          "default": 6000,
+          "minimum": 0,
+          "description": "Maximum characters per run chunk in request logs. Set 0 to disable truncation."
         }
       }
     },
@@ -64,6 +89,14 @@
       {
         "command": "hurl.restartLanguageServer",
         "title": "Hurl: Restart Language Server"
+      },
+      {
+        "command": "hurl.showLog",
+        "title": "Hurl: Show Log"
+      },
+      {
+        "command": "hurl.showRequestLog",
+        "title": "Hurl: Show Request Log"
       }
     ]
   },
