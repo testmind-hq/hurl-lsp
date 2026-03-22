@@ -554,6 +554,7 @@ impl LanguageServer for Backend {
         .await;
 
         let output = cmd.output().await;
+        let request_log_limit = request_log_max_chars();
         match output {
             Ok(output) if output.status.success() => {
                 self.execution_diagnostics.remove(&uri);
@@ -571,12 +572,18 @@ impl LanguageServer for Backend {
                     format!("hurl run succeeded:\n{}", truncate_message(stdout.as_ref()))
                 };
                 if !stdout.trim().is_empty() {
-                    self.log_request(format!("stdout:\n{}", truncate_message(stdout.as_ref())))
-                        .await;
+                    self.log_request(format!(
+                        "stdout:\n{}",
+                        truncate_message_with_limit(stdout.as_ref(), request_log_limit)
+                    ))
+                    .await;
                 }
                 if !stderr.trim().is_empty() {
-                    self.log_request(format!("stderr:\n{}", truncate_message(stderr.as_ref())))
-                        .await;
+                    self.log_request(format!(
+                        "stderr:\n{}",
+                        truncate_message_with_limit(stderr.as_ref(), request_log_limit)
+                    ))
+                    .await;
                 }
                 self.log_execution(format!("hurl run succeeded ({run_target}) for {}", uri))
                     .await;
@@ -602,12 +609,18 @@ impl LanguageServer for Backend {
                     parse_run_summary(stderr.as_ref(), stdout.as_ref(), false),
                 );
                 if !stdout.trim().is_empty() {
-                    self.log_request(format!("stdout:\n{}", truncate_message(stdout.as_ref())))
-                        .await;
+                    self.log_request(format!(
+                        "stdout:\n{}",
+                        truncate_message_with_limit(stdout.as_ref(), request_log_limit)
+                    ))
+                    .await;
                 }
                 if !stderr.trim().is_empty() {
-                    self.log_request(format!("stderr:\n{}", truncate_message(stderr.as_ref())))
-                        .await;
+                    self.log_request(format!(
+                        "stderr:\n{}",
+                        truncate_message_with_limit(stderr.as_ref(), request_log_limit)
+                    ))
+                    .await;
                 }
                 error!("hurl run failed ({run_target}) for {}: {}", uri, detail);
                 self.log_execution(format!(
@@ -632,7 +645,11 @@ impl LanguageServer for Backend {
                     line as u32,
                     parse_run_summary(&err_text, "", false),
                 );
-                self.log_request(format!("spawn error:\n{err_text}")).await;
+                self.log_request(format!(
+                    "spawn error:\n{}",
+                    truncate_message_with_limit(&err_text, request_log_limit)
+                ))
+                .await;
                 error!(
                     "failed to execute hurl ({run_target}) for {}: {}",
                     uri, error
@@ -657,11 +674,28 @@ impl LanguageServer for Backend {
 
 fn truncate_message(input: &str) -> String {
     const MAX_CHARS: usize = 600;
-    if input.chars().count() <= MAX_CHARS {
-        input.to_string()
-    } else {
-        let prefix: String = input.chars().take(MAX_CHARS).collect();
-        format!("{prefix}...")
+    truncate_message_with_limit(input, Some(MAX_CHARS))
+}
+
+fn truncate_message_with_limit(input: &str, max_chars: Option<usize>) -> String {
+    let Some(max_chars) = max_chars else {
+        return input.to_string();
+    };
+    if input.chars().count() <= max_chars {
+        return input.to_string();
+    }
+    let prefix: String = input.chars().take(max_chars).collect();
+    format!("{prefix}...")
+}
+
+fn request_log_max_chars() -> Option<usize> {
+    let value = std::env::var("HURL_RUN_LOG_MAX_CHARS")
+        .ok()
+        .and_then(|raw| raw.parse::<usize>().ok());
+    match value {
+        Some(0) => None,
+        Some(v) => Some(v),
+        None => Some(6000),
     }
 }
 

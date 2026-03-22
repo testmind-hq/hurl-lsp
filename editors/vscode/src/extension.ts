@@ -8,6 +8,8 @@ let runtimeLogChannel: vscode.OutputChannel | undefined;
 let requestLogChannel: vscode.OutputChannel | undefined;
 let logNotificationDisposable: vscode.Disposable | undefined;
 const REQUEST_LOG_PREFIX = "[hurl-request] ";
+let requestRuns: string[] = [];
+let activeRunIndex = -1;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   runtimeLogChannel = vscode.window.createOutputChannel("Hurl Runtime Log");
@@ -75,12 +77,14 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
 
   const traceSetting = vscode.workspace.getConfiguration("hurl").get<string>("server.trace", "off");
   const runVerbosity = vscode.workspace.getConfiguration("hurl").get<string>("run.verbosity", "verbose");
+  const runLogMaxChars = vscode.workspace.getConfiguration("hurl").get<number>("run.log.maxCharsPerRun", 6000);
   const serverOptions: ServerOptions = {
     command,
     options: {
       env: {
         ...process.env,
         HURL_RUN_VERBOSITY: runVerbosity,
+        HURL_RUN_LOG_MAX_CHARS: String(runLogMaxChars),
       },
     },
   };
@@ -108,7 +112,9 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
 
   await client.start();
   client.setTrace(toTrace(traceSetting));
-  appendRuntimeLog(`Language client started (trace=${traceSetting}, runVerbosity=${runVerbosity}).`);
+  appendRuntimeLog(
+    `Language client started (trace=${traceSetting}, runVerbosity=${runVerbosity}, runLogMaxChars=${runLogMaxChars}).`,
+  );
 }
 
 function toTrace(value: string): Trace {
@@ -134,6 +140,53 @@ function appendRequestLog(message: string): void {
   if (!requestLogChannel) {
     return;
   }
+  const channel = requestLogChannel;
+  const config = vscode.workspace.getConfiguration("hurl");
+  const clearOnRun = config.get<boolean>("run.log.clearOnRun", false);
+  const maxRuns = Math.max(1, config.get<number>("run.log.maxRuns", 3));
+  const maxCharsPerRun = Math.max(0, config.get<number>("run.log.maxCharsPerRun", 6000));
   const ts = new Date().toISOString();
-  requestLogChannel.appendLine(`[${ts}] ${message}`);
+  const fullLine = `[${ts}] ${message}`;
+  const line = truncateLogChunk(fullLine, maxCharsPerRun);
+
+  if (message.startsWith("run target=")) {
+    if (clearOnRun) {
+      requestRuns = [];
+      activeRunIndex = -1;
+    }
+    requestRuns.push(line);
+    while (requestRuns.length > maxRuns) {
+      requestRuns.shift();
+    }
+    activeRunIndex = requestRuns.length - 1;
+  } else {
+    if (activeRunIndex < 0 || activeRunIndex >= requestRuns.length) {
+      requestRuns.push(line);
+      while (requestRuns.length > maxRuns) {
+        requestRuns.shift();
+      }
+      activeRunIndex = requestRuns.length - 1;
+    } else {
+      requestRuns[activeRunIndex] = `${requestRuns[activeRunIndex]}\n${line}`;
+    }
+  }
+
+  channel.clear();
+  requestRuns.forEach((chunk, index) => {
+    if (index > 0) {
+      channel.appendLine("");
+      channel.appendLine("────────────────────────────────────────────────────────");
+    }
+    channel.appendLine(chunk);
+  });
+}
+
+function truncateLogChunk(text: string, maxChars: number): string {
+  if (maxChars <= 0) {
+    return text;
+  }
+  if (text.length <= maxChars) {
+    return text;
+  }
+  return `${text.slice(0, maxChars)}… [truncated]`;
 }

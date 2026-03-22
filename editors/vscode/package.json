@@ -65,6 +65,23 @@
           "enum": ["verbose", "very-verbose"],
           "default": "verbose",
           "description": "Verbosity level for running hurl requests from CodeLens."
+        },
+        "hurl.run.log.clearOnRun": {
+          "type": "boolean",
+          "default": false,
+          "description": "Clear request log output before each new run."
+        },
+        "hurl.run.log.maxRuns": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "description": "Maximum number of recent runs kept in Hurl Request Log."
+        },
+        "hurl.run.log.maxCharsPerRun": {
+          "type": "number",
+          "default": 6000,
+          "minimum": 0,
+          "description": "Maximum characters per run chunk in request logs. Set 0 to disable truncation."
         }
       }
     },
