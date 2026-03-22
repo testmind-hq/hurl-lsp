@@ -37,7 +37,7 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       void vscode.window.showErrorMessage(
-        `Unable to start hurl-lsp automatically. Configure hurl.server.path manually. ${message}`,
+        `Unable to start hurl-lsp automatically. Set hurl.server.path to a local binary. ${message}`,
       );
       return;
     }

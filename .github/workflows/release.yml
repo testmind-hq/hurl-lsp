@@ -4,28 +4,70 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and upload artifacts without creating GitHub Release"
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   binaries:
     strategy:
       matrix:
         include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            ext: ""
+            archive: tar.gz
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            ext: ""
+            archive: tar.gz
           - runner: macos-latest
             target: aarch64-apple-darwin
-          - runner: macos-13
+            ext: ""
+            archive: tar.gz
+          - runner: macos-15-intel
             target: x86_64-apple-darwin
+            ext: ""
+            archive: tar.gz
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            ext: ".exe"
+            archive: zip
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           target: ${{ matrix.target }}
-      - run: cargo build --release --package hurl-lsp --target ${{ matrix.target }}
-      - run: |
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+      - name: Build
+        run: cross build --release --package hurl-lsp --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
           version="${GITHUB_REF_NAME#v}"
           mkdir -p dist
-          cp target/${{ matrix.target }}/release/hurl-lsp dist/hurl-lsp
-          tar -czf hurl-lsp-${version}-${{ matrix.target }}.tar.gz -C dist hurl-lsp
-      - uses: softprops/action-gh-release@v2
+          cp "target/${{ matrix.target }}/release/hurl-lsp${{ matrix.ext }}" "dist/hurl-lsp${{ matrix.ext }}"
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            archive="hurl-lsp-${version}-${{ matrix.target }}.zip"
+            powershell -Command "Compress-Archive -Path 'dist/hurl-lsp${{ matrix.ext }}' -DestinationPath '${archive}'"
+          else
+            tar -czf "hurl-lsp-${version}-${{ matrix.target }}.tar.gz" -C dist "hurl-lsp${{ matrix.ext }}"
+          fi
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: hurl-lsp-*.tar.gz
+          name: hurl-lsp-${{ matrix.target }}
+          path: hurl-lsp-*
+      - name: Publish GitHub Release assets
+        if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run != true) }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            hurl-lsp-*.tar.gz
+            hurl-lsp-*.zip

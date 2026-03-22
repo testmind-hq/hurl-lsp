@@ -4,6 +4,15 @@
   "description": "VSCode support for Hurl powered by hurl-lsp",
   "version": "0.1.0",
   "publisher": "yuchou87",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yuchou87/hurl-lsp.git"
+  },
+  "homepage": "https://github.com/yuchou87/hurl-lsp",
+  "bugs": {
+    "url": "https://github.com/yuchou87/hurl-lsp/issues"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },
