@@ -5,10 +5,9 @@ import * as https from "node:https";
 import { spawn } from "node:child_process";
 import type { ExtensionContext } from "vscode";
 
-const BINARY_VERSION = "0.1.0";
-const REPO = "yuchou87/hurl-lsp";
+const REPO = "testmind-hq/hurl-lsp";
 
-export async function ensureBinary(context: ExtensionContext): Promise<string> {
+export async function ensureBinary(context: ExtensionContext, binaryVersion: string): Promise<string> {
   const storageDir = path.join(context.globalStorageUri.fsPath, "bin");
   const binaryPath = path.join(storageDir, binaryName());
 
@@ -20,8 +19,8 @@ export async function ensureBinary(context: ExtensionContext): Promise<string> {
 
   const target = detectTarget();
   const asset = releaseAssetForTarget(target);
-  const archiveName = `hurl-lsp-${BINARY_VERSION}-${target}.${asset.extension}`;
-  const url = `https://github.com/${REPO}/releases/download/v${BINARY_VERSION}/${archiveName}`;
+  const archiveName = `hurl-lsp-${binaryVersion}-${target}.${asset.extension}`;
+  const url = `https://github.com/${REPO}/releases/download/v${binaryVersion}/${archiveName}`;
   const archivePath = path.join(storageDir, archiveName);
 
   await download(url, archivePath);

@@ -102,3 +102,10 @@ jobs:
           tag="${GITHUB_REF_NAME}"
           gh release view "${tag}" >/dev/null 2>&1 || gh release create "${tag}" --title "${tag}" --notes ""
           find dist -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print0 | xargs -0 gh release upload "${tag}" --clobber
+      - name: Publish checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          (cd dist && find . -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print0 | xargs -0 sha256sum | sed 's# \./# #') > SHA256SUMS
+          gh release upload "${tag}" SHA256SUMS --clobber

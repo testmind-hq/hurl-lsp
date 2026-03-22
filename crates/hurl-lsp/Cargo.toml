@@ -3,6 +3,13 @@ name = "hurl-lsp"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Language Server Protocol implementation for Hurl"
+readme = "README.md"
+repository = "https://github.com/testmind-hq/hurl-lsp"
+homepage = "https://github.com/testmind-hq/hurl-lsp"
+documentation = "https://docs.rs/hurl-lsp"
+keywords = ["hurl", "lsp", "language-server", "http", "testing"]
+categories = ["development-tools", "development-tools::testing"]
 
 [dependencies]
 dashmap.workspace = true

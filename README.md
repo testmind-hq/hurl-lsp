@@ -181,13 +181,16 @@ require('lspconfig').hurl_lsp.setup({
 cargo install hurl-lsp
 ```
 
-**Via Homebrew** _(coming soon)_:
+**Via Homebrew** _(tap-based, formula maintained in this repo)_:
 
 ```sh
+brew tap testmind-hq/tap
 brew install hurl-lsp
 ```
 
-Pre-built binaries for macOS (Intel + Apple Silicon) are available on the [Releases](https://github.com/yuchou87/hurl-lsp/releases) page.
+Homebrew formula source: `packaging/homebrew/Formula/hurl-lsp.rb`.
+
+Pre-built binaries for macOS (Intel + Apple Silicon), Linux, and Windows are available on the [Releases](https://github.com/testmind-hq/hurl-lsp/releases) page.
 
 ---
 
@@ -214,11 +217,11 @@ CI result feedback integration from TestMind is a future phase and is not implem
 
 - [x] Multi-platform cross-compilation workflow baseline + GitHub Releases automation
 - [x] VSCode extension (syntax highlight + snippets + LSP client + auto binary management)
-- [ ] Publish to VS Marketplace
+- [~] Publish to VS Marketplace (workflow prepared: `.github/workflows/publish-vscode.yml`)
 - [x] Zed extension (syntax highlight + LSP client) baseline skeleton
 - [ ] Publish to Zed Extensions
 - [~] Helix configuration docs + upstream PR to `languages.toml` (docs done, upstream PR pending)
-- [ ] Publish to crates.io
+- [~] Publish to crates.io (workflow prepared: `.github/workflows/publish-crates-io.yml`)
 
 ### Phase 3 — Differentiating Features
 
@@ -233,7 +236,7 @@ CI result feedback integration from TestMind is a future phase and is not implem
 
 - [ ] VSCode Webview panel (single entry view + chain flow graph)
 - [ ] Markdown export command
-- [ ] Homebrew distribution
+- [~] Homebrew distribution (formula + checksum flow prepared)
 - [ ] Upstream PR to Hurl official docs (editor support page)
 - [ ] TestMind CI result feedback integration
 
@@ -277,6 +280,8 @@ hurl-lsp/
 └── .github/
     └── workflows/
         ├── ci.yml
+        ├── publish-crates-io.yml
+        ├── publish-vscode.yml
         └── release.yml
 ```
 
@@ -287,7 +292,7 @@ hurl-lsp/
 Contributions are welcome. If you plan to work on a significant feature, please open an issue first to discuss the approach.
 
 ```sh
-git clone https://github.com/yuchou87/hurl-lsp
+git clone https://github.com/testmind-hq/hurl-lsp
 cd hurl-lsp
 cargo build
 cargo test
