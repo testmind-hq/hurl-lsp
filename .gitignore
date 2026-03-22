@@ -29,3 +29,6 @@ docs/plans/
 editors/vscode/node_modules/
 editors/vscode/out/
 editors/vscode/*.vsix
+
+# Local run/report artifacts
+hurl-report/

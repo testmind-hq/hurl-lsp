@@ -11,6 +11,7 @@ pub const RUN_ENTRY_WITH_VARS_COMMAND: &str = "hurl.runEntryWithVars";
 pub const RUN_CHAIN_COMMAND: &str = "hurl.runChain";
 pub const RUN_FILE_COMMAND: &str = "hurl.runFile";
 pub const COPY_AS_CURL_COMMAND: &str = "hurl.copyAsCurl";
+pub const CLEAR_RUN_DIAGNOSTICS_COMMAND: &str = "hurl.clearRunDiagnostics";
 pub const NOOP_COMMAND: &str = "hurl.noop";
 
 #[cfg(test)]

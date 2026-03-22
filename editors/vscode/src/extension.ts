@@ -2,6 +2,8 @@ import * as vscode from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions } from "vscode-languageclient/node";
 import { Trace } from "vscode-jsonrpc";
 import { ensureBinary } from "./download";
+import { exportActiveHurlAsMarkdown } from "./markdownExport";
+import { HurlOutlineProvider } from "./outlineView";
 
 let client: LanguageClient | undefined;
 let runtimeLogChannel: vscode.OutputChannel | undefined;
@@ -12,6 +14,25 @@ let requestRuns: string[] = [];
 let activeRunIndex = -1;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  const outlineProvider = new HurlOutlineProvider();
+  const outlineView = vscode.window.createTreeView("hurlRequests", {
+    treeDataProvider: outlineProvider,
+    showCollapseAll: true,
+  });
+  context.subscriptions.push(outlineView);
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor(() => {
+      outlineProvider.refresh();
+    }),
+  );
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      const active = vscode.window.activeTextEditor?.document;
+      if (active && event.document.uri.toString() === active.uri.toString()) {
+        outlineProvider.refresh();
+      }
+    }),
+  );
   runtimeLogChannel = vscode.window.createOutputChannel("Hurl Runtime Log");
   requestLogChannel = vscode.window.createOutputChannel("Hurl Request Log");
   context.subscriptions.push(runtimeLogChannel);
@@ -29,6 +50,72 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand("hurl.showRequestLog", () => {
       requestLogChannel?.show(true);
+    }),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("hurl.formatDocument", async () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) {
+        void vscode.window.showWarningMessage("No active editor.");
+        return;
+      }
+      if (editor.document.languageId !== "hurl" && !editor.document.fileName.endsWith(".hurl")) {
+        void vscode.window.showWarningMessage("Active file is not a .hurl document.");
+        return;
+      }
+      appendRuntimeLog(`Format requested for ${editor.document.uri.toString()}`);
+      await vscode.commands.executeCommand("editor.action.formatDocument");
+      appendRuntimeLog(`Format completed for ${editor.document.uri.toString()}`);
+    }),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("hurl.exportAsMarkdown", async () => {
+      await exportActiveHurlAsMarkdown();
+    }),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("hurl.clearRunAlerts", async () => {
+      const uri = vscode.window.activeTextEditor?.document.uri;
+      if (!uri) {
+        void vscode.window.showWarningMessage("No active editor.");
+        return;
+      }
+      await vscode.commands.executeCommand("hurl.clearRunDiagnostics", uri.toString());
+      void vscode.window.showInformationMessage("Hurl run alerts cleared.");
+    }),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("hurl.outline.runEntry", async (node?: { uri?: vscode.Uri; line?: number }) => {
+      const uri = node?.uri ?? vscode.window.activeTextEditor?.document.uri;
+      const line = typeof node?.line === "number" ? node.line : vscode.window.activeTextEditor?.selection.active.line;
+      if (!uri || typeof line !== "number") {
+        return;
+      }
+      await vscode.commands.executeCommand("hurl.runEntry", uri.toString(), line);
+    }),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("hurl.outline.runChain", async (node?: { uri?: vscode.Uri; line?: number }) => {
+      const uri = node?.uri ?? vscode.window.activeTextEditor?.document.uri;
+      const line = typeof node?.line === "number" ? node.line : vscode.window.activeTextEditor?.selection.active.line;
+      if (!uri || typeof line !== "number") {
+        return;
+      }
+      await vscode.commands.executeCommand("hurl.runChain", uri.toString(), line);
+    }),
+  );
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (
+        event.affectsConfiguration("hurl.outline.groupMode") ||
+        event.affectsConfiguration("hurl.outline.sortMode") ||
+        event.affectsConfiguration("hurl.run.inlineFailureDiagnostics")
+      ) {
+        void (async () => {
+          await restart(context);
+          outlineProvider.refresh();
+        })();
+      }
     }),
   );
 
@@ -78,6 +165,11 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
   const traceSetting = vscode.workspace.getConfiguration("hurl").get<string>("server.trace", "off");
   const runVerbosity = vscode.workspace.getConfiguration("hurl").get<string>("run.verbosity", "verbose");
   const runLogMaxChars = vscode.workspace.getConfiguration("hurl").get<number>("run.log.maxCharsPerRun", 6000);
+  const runInlineFailureDiagnostics = vscode.workspace
+    .getConfiguration("hurl")
+    .get<boolean>("run.inlineFailureDiagnostics", true);
+  const outlineGroupMode = vscode.workspace.getConfiguration("hurl").get<string>("outline.groupMode", "hierarchical");
+  const outlineSortMode = vscode.workspace.getConfiguration("hurl").get<string>("outline.sortMode", "source");
   const serverOptions: ServerOptions = {
     command,
     options: {
@@ -85,6 +177,9 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
         ...process.env,
         HURL_RUN_VERBOSITY: runVerbosity,
         HURL_RUN_LOG_MAX_CHARS: String(runLogMaxChars),
+        HURL_RUN_INLINE_FAILURE_DIAGNOSTICS: String(runInlineFailureDiagnostics),
+        HURL_OUTLINE_GROUP_MODE: outlineGroupMode,
+        HURL_OUTLINE_SORT_MODE: outlineSortMode,
       },
     },
   };
@@ -113,7 +208,7 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
   await client.start();
   client.setTrace(toTrace(traceSetting));
   appendRuntimeLog(
-    `Language client started (trace=${traceSetting}, runVerbosity=${runVerbosity}, runLogMaxChars=${runLogMaxChars}).`,
+    `Language client started (trace=${traceSetting}, runVerbosity=${runVerbosity}, runLogMaxChars=${runLogMaxChars}, inlineFailureDiagnostics=${runInlineFailureDiagnostics}, outlineGroupMode=${outlineGroupMode}, outlineSortMode=${outlineSortMode}).`,
   );
 }
 

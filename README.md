@@ -89,6 +89,11 @@ Per-request Code Lens is available with:
 - `📄 Run file` action (executes all request entries in current file)
 - `📋 Copy as curl` action (returns generated curl text from request line + headers)
 
+Run alert behavior:
+
+- `hurl.run.inlineFailureDiagnostics`: `true` (default) shows inline red failure diagnostics; set to `false` to disable them
+- `Hurl: Clear Run Alerts`: clears current file's run diagnostics immediately
+
 ### OpenAPI Path Completion
 
 When `openapi.yaml` / `openapi.yml` / `swagger.yaml` / `swagger.yml` / `swagger.json` is present in the workspace hierarchy,
@@ -99,6 +104,15 @@ are also suggested inside JSON request bodies.
 ### Built-in Formatter
 
 `Format Document` is backed by official `hurlfmt::format::format_text(..., false)` through LSP.
+Use command `Hurl: Format Document` for explicit formatter invocation with runtime logging.
+
+### Markdown Export (VSCode)
+
+Command `Hurl: Export as Markdown` exports current `.hurl` file into a sibling `.md` file.
+The export follows outline preferences:
+
+- `hurl.outline.groupMode`: `hierarchical` | `flat`
+- `hurl.outline.sortMode`: `source` | `priority`
 
 ### Document Outline
 
@@ -113,6 +127,16 @@ The server exposes metadata-first document symbols with request-level fallback:
 │   └── TC-0042 Invalid email
 └── ○ GET /health
 ```
+
+Outline behavior is configurable in VSCode settings:
+
+- `hurl.outline.groupMode`: `hierarchical` keeps chain/priority groups, `flat` shows request entries only
+- `hurl.outline.sortMode`: `source` uses file order, `priority` sorts by `P0 > P1 > P2` (with step order `setup > test > teardown`)
+
+In VSCode Explorer, `Hurl Requests` view provides executable request nodes with inline actions:
+
+- `Run` (executes selected request)
+- `Run Chain` (executes selected request + inferred/declared dependencies)
 
 ## Editor Support
 
@@ -248,7 +272,7 @@ CI result feedback integration from TestMind is a future phase and is not implem
 ### Phase 4 — Ecosystem
 
 - [ ] VSCode Webview panel (single entry view + chain flow graph)
-- [ ] Markdown export command
+- [x] Markdown export command (group/sort aware)
 - [~] Homebrew distribution (formula + checksum flow prepared)
 - [ ] Upstream PR to Hurl official docs (editor support page)
 - [ ] TestMind CI result feedback integration
