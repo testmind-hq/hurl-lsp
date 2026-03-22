@@ -143,6 +143,27 @@ pub fn build_curl_for_entry(text: &str, entry_line: usize) -> Option<String> {
     Some(command)
 }
 
+pub fn extract_entry_text(text: &str, entry_line: usize) -> Option<String> {
+    let parsed = parse_document(text);
+    let mut entry_lines: Vec<usize> = parsed
+        .entries
+        .iter()
+        .map(|entry| entry.line as usize)
+        .collect();
+    entry_lines.sort_unstable();
+    let start = entry_lines
+        .iter()
+        .copied()
+        .find(|line| *line == entry_line)?;
+    let end = entry_lines
+        .iter()
+        .copied()
+        .find(|line| *line > start)
+        .unwrap_or_else(|| text.lines().count());
+    let lines: Vec<&str> = text.lines().collect();
+    Some(lines[start..end].join("\n"))
+}
+
 fn shell_single_quote(value: &str) -> String {
     value.replace('\'', "'\"'\"'")
 }
@@ -183,5 +204,13 @@ mod tests {
         let curl = build_curl_for_entry(text, 0).expect("curl");
         assert!(curl.contains("curl -X POST"));
         assert!(curl.contains("-H 'Content-Type: application/json'"));
+    }
+
+    #[test]
+    fn extracts_only_target_entry_text() {
+        let text = "GET /users\nHTTP 200\n\nPOST /orders\nHTTP 201\n";
+        let entry = extract_entry_text(text, 3).expect("entry");
+        assert!(entry.starts_with("POST /orders"));
+        assert!(!entry.contains("GET /users"));
     }
 }

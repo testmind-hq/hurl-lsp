@@ -13,11 +13,14 @@ const OPENAPI_FILES: &[&str] = &[
     "swagger.json",
 ];
 
-pub fn load_openapi_paths(document_uri: &Url) -> BTreeSet<String> {
+pub fn load_openapi_paths_with_roots(
+    document_uri: &Url,
+    workspace_roots: &[PathBuf],
+) -> BTreeSet<String> {
     let Some(base_dir) = base_dir_from_uri(document_uri) else {
         return BTreeSet::new();
     };
-    let dirs = ancestor_dirs(base_dir);
+    let dirs = bounded_ancestor_dirs(base_dir, workspace_roots);
     let mut paths = BTreeSet::new();
 
     for dir in dirs {
@@ -66,11 +69,35 @@ fn base_dir_from_uri(uri: &Url) -> Option<PathBuf> {
     uri.to_file_path().ok()?.parent().map(Path::to_path_buf)
 }
 
-fn ancestor_dirs(base_dir: PathBuf) -> Vec<PathBuf> {
+fn bounded_ancestor_dirs(base_dir: PathBuf, workspace_roots: &[PathBuf]) -> Vec<PathBuf> {
+    let normalized_roots: Vec<PathBuf> = workspace_roots
+        .iter()
+        .map(|root| root.canonicalize().unwrap_or_else(|_| root.clone()))
+        .collect();
+    let normalized_base = base_dir.canonicalize().unwrap_or_else(|_| base_dir.clone());
+
+    let selected_root = normalized_roots
+        .iter()
+        .filter(|root| normalized_base.starts_with(root))
+        .max_by_key(|root| root.components().count())
+        .cloned();
+
     let mut dirs = Vec::new();
-    let mut current = Some(base_dir);
+    let mut current = Some(normalized_base);
     while let Some(dir) = current {
+        if let Some(root) = &selected_root {
+            if !dir.starts_with(root) {
+                break;
+            }
+        }
         dirs.push(dir.clone());
+        if let Some(root) = &selected_root {
+            if dir == *root {
+                break;
+            }
+        } else {
+            break;
+        }
         current = dir.parent().map(Path::to_path_buf);
     }
     dirs
@@ -92,7 +119,7 @@ mod tests {
         .expect("write yaml");
         let uri = Url::from_file_path(base.join("test.hurl")).expect("uri");
 
-        let paths = load_openapi_paths(&uri);
+        let paths = load_openapi_paths_with_roots(&uri, std::slice::from_ref(&base));
         assert!(paths.contains("/users"));
         assert!(paths.contains("/health"));
         let _ = fs::remove_dir_all(base);
@@ -109,9 +136,34 @@ mod tests {
         .expect("write json");
         let uri = Url::from_file_path(base.join("test.hurl")).expect("uri");
 
-        let paths = load_openapi_paths(&uri);
+        let paths = load_openapi_paths_with_roots(&uri, std::slice::from_ref(&base));
         assert!(paths.contains("/orders"));
         assert!(paths.contains("/orders/{id}"));
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn does_not_read_openapi_outside_workspace_root() {
+        let base = tmp_dir("hurl-lsp-openapi-bounded");
+        let workspace = base.join("workspace");
+        let nested = workspace.join("api");
+        fs::create_dir_all(&nested).expect("mkdir");
+        fs::write(
+            base.join("openapi.yaml"),
+            "openapi: 3.0.0\npaths:\n  /outer: {}\n",
+        )
+        .expect("write outer");
+        fs::write(
+            workspace.join("openapi.yaml"),
+            "openapi: 3.0.0\npaths:\n  /inner: {}\n",
+        )
+        .expect("write inner");
+        let uri = Url::from_file_path(nested.join("test.hurl")).expect("uri");
+
+        let paths = load_openapi_paths_with_roots(&uri, std::slice::from_ref(&workspace));
+        assert!(paths.contains("/inner"));
+        assert!(!paths.contains("/outer"));
+
         let _ = fs::remove_dir_all(base);
     }
 
