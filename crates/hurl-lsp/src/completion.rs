@@ -1,15 +1,10 @@
+use crate::syntax::{
+    is_identifier, method_from_line, section_label, section_name_from_line,
+    visible_variables_before_line, SECTION_NAMES,
+};
 use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind, Position};
 
 const METHODS: &[&str] = &["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
-const SECTIONS: &[&str] = &[
-    "[Asserts]",
-    "[Captures]",
-    "[Cookies]",
-    "[FormParams]",
-    "[Headers]",
-    "[Options]",
-    "[QueryStringParameters]",
-];
 const ASSERTS: &[(&str, &str)] = &[
     ("jsonpath", "jsonpath \"$.field\" == value"),
     ("xpath", "xpath \"//node\" exists"),
@@ -26,12 +21,13 @@ const CONTENT_TYPES: &[&str] = &[
 ];
 
 pub fn completions(text: &str, position: Position) -> Vec<CompletionItem> {
+    let line_idx = position.line as usize;
     let line = text.lines().nth(position.line as usize).unwrap_or_default();
     let prefix = &line[..(position.character as usize).min(line.len())];
     let trimmed = prefix.trim_start();
 
     if let Some(var_prefix) = variable_prefix(prefix) {
-        let vars = known_variables(text);
+        let vars = known_variables(text, line_idx);
         return vars
             .into_iter()
             .filter(|name| name.starts_with(var_prefix))
@@ -46,13 +42,13 @@ pub fn completions(text: &str, position: Position) -> Vec<CompletionItem> {
     }
 
     if trimmed.starts_with('[') {
-        return SECTIONS
+        return SECTION_NAMES
             .iter()
-            .map(|section| keyword_item(section))
+            .map(|section| keyword_item(&section_label(section)))
             .collect();
     }
 
-    if in_asserts_block(text, position.line as usize) {
+    if in_asserts_block(text, line_idx) {
         return ASSERTS
             .iter()
             .map(|(label, detail)| CompletionItem {
@@ -85,19 +81,21 @@ fn keyword_item(value: &str) -> CompletionItem {
 }
 
 fn in_asserts_block(text: &str, line_idx: usize) -> bool {
-    let mut current_section = "";
+    let mut current_section = None;
 
     for (idx, line) in text.lines().enumerate() {
         let trimmed = line.trim();
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            current_section = trimmed;
+        if method_from_line(trimmed).is_some() {
+            current_section = None;
+        } else if let Some(name) = section_name_from_line(trimmed) {
+            current_section = Some(name);
         }
         if idx == line_idx {
             break;
         }
     }
 
-    current_section == "[Asserts]"
+    current_section == Some("Asserts")
 }
 
 fn variable_prefix(prefix: &str) -> Option<&str> {
@@ -109,37 +107,11 @@ fn variable_prefix(prefix: &str) -> Option<&str> {
     Some(content)
 }
 
-fn known_variables(text: &str) -> Vec<String> {
-    let mut in_captures = false;
-    let mut vars = Vec::new();
-
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            in_captures = trimmed == "[Captures]";
-            continue;
-        }
-        if !in_captures || trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-
-        let Some((name, _)) = trimmed.split_once(':') else {
-            continue;
-        };
-        let name = name.trim();
-        if name.is_empty()
-            || !name
-                .chars()
-                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
-        {
-            continue;
-        }
-        if !vars.iter().any(|existing| existing == name) {
-            vars.push(name.to_string());
-        }
-    }
-
-    vars
+fn known_variables(text: &str, line_idx: usize) -> Vec<String> {
+    visible_variables_before_line(text, line_idx)
+        .into_iter()
+        .filter(|name| is_identifier(name))
+        .collect()
 }
 
 #[cfg(test)]
@@ -163,5 +135,26 @@ mod tests {
         let text = "[Captures]\nuser_id: jsonpath \"$.id\"\n\nGET /users/{{u";
         let items = completions(text, Position::new(3, 13));
         assert!(items.iter().any(|item| item.label == "user_id"));
+    }
+
+    #[test]
+    fn resets_assert_context_on_next_request() {
+        let text = "GET /a\nHTTP 200\n[Asserts]\njsonpath \"$.id\" == 1\n\nGET /b\n";
+        let items = completions(text, Position::new(5, 2));
+        assert!(!items.iter().any(|item| item.label == "jsonpath"));
+    }
+
+    #[test]
+    fn supports_short_section_completion() {
+        let items = completions("[Q", Position::new(0, 2));
+        assert!(items.iter().any(|item| item.label == "[Query]"));
+        assert!(items.iter().any(|item| item.label == "[Form]"));
+    }
+
+    #[test]
+    fn does_not_suggest_future_capture_variable() {
+        let text = "GET /users/{{u}}\nHTTP 200\n\nGET /a\nHTTP 200\n[Captures]\nuser_id: jsonpath \"$.id\"\n";
+        let items = completions(text, Position::new(0, 14));
+        assert!(!items.iter().any(|item| item.label == "user_id"));
     }
 }

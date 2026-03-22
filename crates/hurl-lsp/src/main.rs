@@ -6,6 +6,7 @@ mod formatting;
 mod hover;
 mod metadata;
 mod symbols;
+mod syntax;
 
 use backend::Backend;
 use tower_lsp::{LspService, Server};

@@ -1,3 +1,7 @@
+use crate::syntax::{
+    is_http_method, is_identifier, is_known_section, section_label, section_name_from_line,
+    variable_placeholders, visible_variables_before_line,
+};
 use hurl_core::error::DisplaySourceError;
 use std::collections::BTreeSet;
 use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
@@ -14,44 +18,20 @@ pub struct ParsedDocument {
     pub entries: Vec<Entry>,
 }
 
-const HTTP_METHODS: &[&str] = &[
-    "GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH",
-];
-const SECTIONS: &[&str] = &[
-    "[Asserts]",
-    "[BasicAuth]",
-    "[Captures]",
-    "[Cookies]",
-    "[FormParams]",
-    "[Headers]",
-    "[MultipartFormData]",
-    "[Options]",
-    "[QueryStringParams]",
-    "[QueryStringParameters]",
-];
-
 pub fn parse_document(text: &str) -> ParsedDocument {
     let mut entries = Vec::new();
 
     for (line_idx, raw_line) in text.lines().enumerate() {
         let line = raw_line.trim();
-        if line.is_empty()
-            || line.starts_with('#')
-            || line.starts_with('[')
-            || line.starts_with("HTTP ")
-        {
+        if line.is_empty() || line.starts_with('#') || line.starts_with("HTTP ") {
             continue;
         }
 
         let mut parts = line.split_whitespace();
-        let Some(first) = parts.next() else {
-            continue;
-        };
-        let Some(second) = parts.next() else {
-            continue;
-        };
+        let Some(first) = parts.next() else { continue };
+        let Some(second) = parts.next() else { continue };
 
-        if HTTP_METHODS.contains(&first) {
+        if is_http_method(first) {
             entries.push(Entry {
                 method: first.to_string(),
                 path: second.to_string(),
@@ -65,7 +45,6 @@ pub fn parse_document(text: &str) -> ParsedDocument {
 
 pub fn collect_diagnostics(text: &str) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
-    let known_variables = collect_known_variables(text);
     let mut seen_sections_in_request = BTreeSet::new();
     if let Err(error) = hurl_core::parser::parse_hurl_file(text) {
         let line = error.pos.line.saturating_sub(1) as u32;
@@ -85,37 +64,39 @@ pub fn collect_diagnostics(text: &str) -> Vec<Diagnostic> {
     for (line_idx, raw_line) in text.lines().enumerate() {
         let trimmed = raw_line.trim();
 
-        if trimmed.starts_with('[') && !SECTIONS.contains(&trimmed) {
-            diagnostics.push(Diagnostic {
-                range: Range::new(
-                    Position::new(line_idx as u32, 0),
-                    Position::new(line_idx as u32, raw_line.len() as u32),
-                ),
-                severity: Some(DiagnosticSeverity::ERROR),
-                source: Some("hurl-lsp".into()),
-                message: format!("Unknown section `{trimmed}`"),
-                ..Default::default()
-            });
-        }
-        if trimmed.starts_with('[')
-            && SECTIONS.contains(&trimmed)
-            && !seen_sections_in_request.insert(trimmed.to_string())
-        {
-            diagnostics.push(Diagnostic {
-                range: Range::new(
-                    Position::new(line_idx as u32, 0),
-                    Position::new(line_idx as u32, raw_line.len() as u32),
-                ),
-                severity: Some(DiagnosticSeverity::WARNING),
-                source: Some("hurl-lsp".into()),
-                message: format!("Duplicate section `{trimmed}`"),
-                ..Default::default()
-            });
+        let known_variables = visible_variables_before_line(text, line_idx);
+
+        if let Some(section_name) = section_name_from_line(trimmed) {
+            let section = section_label(section_name);
+            if !is_known_section(section_name) {
+                diagnostics.push(Diagnostic {
+                    range: Range::new(
+                        Position::new(line_idx as u32, 0),
+                        Position::new(line_idx as u32, raw_line.len() as u32),
+                    ),
+                    severity: Some(DiagnosticSeverity::ERROR),
+                    source: Some("hurl-lsp".into()),
+                    message: format!("Unknown section `{section}`"),
+                    ..Default::default()
+                });
+            }
+            if !seen_sections_in_request.insert(section.clone()) {
+                diagnostics.push(Diagnostic {
+                    range: Range::new(
+                        Position::new(line_idx as u32, 0),
+                        Position::new(line_idx as u32, raw_line.len() as u32),
+                    ),
+                    severity: Some(DiagnosticSeverity::WARNING),
+                    source: Some("hurl-lsp".into()),
+                    message: format!("Duplicate section `{section}`"),
+                    ..Default::default()
+                });
+            }
         }
 
         if is_probable_method_line(trimmed) {
             let method = trimmed.split_whitespace().next().unwrap_or_default();
-            if !HTTP_METHODS.contains(&method) {
+            if !is_http_method(method) {
                 diagnostics.push(Diagnostic {
                     range: Range::new(
                         Position::new(line_idx as u32, 0),
@@ -154,7 +135,7 @@ pub fn collect_diagnostics(text: &str) -> Vec<Diagnostic> {
         }
 
         for (start, end, variable) in variable_placeholders(raw_line) {
-            if known_variables.contains(variable) {
+            if !is_identifier(variable) || known_variables.contains(variable) {
                 continue;
             }
             diagnostics.push(Diagnostic {
@@ -187,65 +168,13 @@ pub fn collect_diagnostics(text: &str) -> Vec<Diagnostic> {
 }
 
 fn is_valid_status(status: &str) -> bool {
-    status.len() == 3 && status.chars().all(|ch| ch.is_ascii_digit())
-}
-
-fn collect_known_variables(text: &str) -> BTreeSet<String> {
-    let mut known = BTreeSet::new();
-    let mut in_captures = false;
-
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            in_captures = trimmed == "[Captures]";
-            continue;
-        }
-        if !in_captures || trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        let Some((name, _)) = trimmed.split_once(':') else {
-            continue;
-        };
-        let name = name.trim();
-        if name.is_empty() {
-            continue;
-        }
-        if name
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
-        {
-            known.insert(name.to_string());
-        }
-    }
-
-    known
-}
-
-fn variable_placeholders(line: &str) -> Vec<(usize, usize, &str)> {
-    let mut result = Vec::new();
-    let mut offset = 0;
-
-    while let Some(start) = line[offset..].find("{{") {
-        let abs_start = offset + start;
-        let content_start = abs_start + 2;
-        let Some(end_rel) = line[content_start..].find("}}") else {
-            break;
-        };
-        let content_end = content_start + end_rel;
-        let variable = line[content_start..content_end].trim();
-        if !variable.is_empty() {
-            result.push((abs_start, content_end + 2, variable));
-        }
-        offset = content_end + 2;
-    }
-
-    result
+    status == "*" || (status.len() == 3 && status.chars().all(|ch| ch.is_ascii_digit()))
 }
 
 fn is_probable_method_line(line: &str) -> bool {
     if line.is_empty()
         || line.starts_with('#')
-        || line.starts_with('[')
+        || section_name_from_line(line).is_some()
         || line.starts_with('{')
         || line.starts_with("HTTP ")
     {
@@ -309,5 +238,47 @@ mod tests {
         assert!(diagnostics
             .iter()
             .any(|diagnostic| diagnostic.message.contains("Invalid HTTP status code")));
+    }
+
+    #[test]
+    fn allows_http_star_status() {
+        let diagnostics = collect_diagnostics("GET /users\nHTTP *\n");
+        assert!(!diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("Invalid HTTP status code")));
+    }
+
+    #[test]
+    fn accepts_short_section_names() {
+        let diagnostics = collect_diagnostics("GET /users\nHTTP 200\n[Query]\nid: 1\n");
+        assert!(!diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("Unknown section")));
+    }
+
+    #[test]
+    fn ignores_json_array_as_section() {
+        let diagnostics = collect_diagnostics("GET /users\nHTTP 200\n[\n  1,\n  2\n]\n");
+        assert!(!diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("Unknown section")));
+    }
+
+    #[test]
+    fn does_not_treat_later_capture_as_visible() {
+        let diagnostics = collect_diagnostics(
+            "GET /users/{{user_id}}\nHTTP 200\n\nGET /users\nHTTP 200\n[Captures]\nuser_id: jsonpath \"$.id\"\n",
+        );
+        assert!(diagnostics.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("Undefined variable `{{user_id}}`")));
+    }
+
+    #[test]
+    fn recognizes_builtin_template_variables() {
+        let diagnostics = collect_diagnostics("GET /users/{{newUuid}}\nHTTP 200\n");
+        assert!(!diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("Undefined variable")));
     }
 }
