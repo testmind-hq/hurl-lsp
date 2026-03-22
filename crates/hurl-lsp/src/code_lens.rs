@@ -27,18 +27,18 @@ pub fn code_lenses_with_context(
     let mut deps_in = BTreeMap::<u32, BTreeSet<String>>::new();
     let mut deps_out = BTreeMap::<u32, BTreeSet<String>>::new();
     for dep in deps {
-        if !dep.variables.is_empty() {
-            deps_in.entry(dep.to_line).or_default().insert(format!(
-                "{} ← {}",
-                dep.variables.join(", "),
-                dep.from_step
-            ));
-            deps_out.entry(dep.from_line).or_default().insert(format!(
-                "{} → {}",
-                dep.variables.join(", "),
-                dep.to_step
-            ));
-        }
+        let in_edge = if dep.variables.is_empty() {
+            dep.from_step.clone()
+        } else {
+            format!("{} ← {}", dep.variables.join(", "), dep.from_step)
+        };
+        let out_edge = if dep.variables.is_empty() {
+            dep.to_step.clone()
+        } else {
+            format!("{} → {}", dep.variables.join(", "), dep.to_step)
+        };
+        deps_in.entry(dep.to_line).or_default().insert(in_edge);
+        deps_out.entry(dep.from_line).or_default().insert(out_edge);
     }
     let lines: Vec<&str> = text.lines().collect();
 
@@ -307,6 +307,19 @@ mod tests {
             item.command
                 .as_ref()
                 .map(|cmd| cmd.title.contains("📥 依赖: user_id ← step-setup-user"))
+                .unwrap_or(false)
+        }));
+    }
+
+    #[test]
+    fn chain_entry_lens_shows_explicit_depends_on_without_variables() {
+        let uri = Url::parse("file:///tmp/test.hurl").expect("uri");
+        let text = "# step_id=step-a\nPOST /users\nHTTP 201\n\n# step_id=step-b\n# depends_on=step-a\nGET /health\nHTTP 200\n";
+        let lenses = code_lenses(&uri, text);
+        assert!(lenses.iter().any(|item| {
+            item.command
+                .as_ref()
+                .map(|cmd| cmd.title.contains("📥 依赖: step-a"))
                 .unwrap_or(false)
         }));
     }

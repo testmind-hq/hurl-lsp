@@ -229,7 +229,8 @@ fn extract_response_fields(
             let Some(responses) = op.get("responses").and_then(|item| item.as_object()) else {
                 continue;
             };
-            for (status, response) in responses {
+            for (status, response_raw) in responses {
+                let response = resolve_local_ref(response_raw, value).unwrap_or(response_raw);
                 let schema = response
                     .get("content")
                     .and_then(|c| c.get("application/json"))
@@ -249,6 +250,15 @@ fn extract_response_fields(
     }
 
     out
+}
+
+fn resolve_local_ref<'a>(
+    value: &'a serde_json::Value,
+    root: &'a serde_json::Value,
+) -> Option<&'a serde_json::Value> {
+    let reference = value.get("$ref").and_then(|item| item.as_str())?;
+    let pointer = reference.strip_prefix('#')?;
+    root.pointer(pointer)
 }
 
 fn collect_schema_property_names(
@@ -434,6 +444,26 @@ mod tests {
         fs::write(
             base.join("openapi.yaml"),
             "openapi: 3.0.0\npaths:\n  /users:\n    post:\n      responses:\n        '201':\n          content:\n            application/json:\n              schema:\n                $ref: '#/components/schemas/UserCreated'\ncomponents:\n  schemas:\n    UserCreated:\n      type: object\n      properties:\n        id:\n          type: string\n        status:\n          type: string\n",
+        )
+        .expect("write yaml");
+        let uri = Url::from_file_path(base.join("test.hurl")).expect("uri");
+
+        let fields = load_openapi_response_fields_with_roots(&uri, std::slice::from_ref(&base));
+        let key = "POST /users 201".to_string();
+        let props = fields.get(&key).expect("POST /users 201 fields");
+        assert!(props.contains("id"));
+        assert!(props.contains("status"));
+
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn loads_response_fields_from_response_object_ref() {
+        let base = tmp_dir("hurl-lsp-openapi-response-object-ref");
+        fs::create_dir_all(&base).expect("mkdir");
+        fs::write(
+            base.join("openapi.yaml"),
+            "openapi: 3.0.0\npaths:\n  /users:\n    post:\n      responses:\n        '201':\n          $ref: '#/components/responses/UserCreated'\ncomponents:\n  responses:\n    UserCreated:\n      description: user created\n      content:\n        application/json:\n          schema:\n            type: object\n            properties:\n              id:\n                type: string\n              status:\n                type: string\n",
         )
         .expect("write yaml");
         let uri = Url::from_file_path(base.join("test.hurl")).expect("uri");

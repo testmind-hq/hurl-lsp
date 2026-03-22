@@ -423,6 +423,7 @@ impl LanguageServer for Backend {
             }
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
+                let stdout = String::from_utf8_lossy(&output.stdout);
                 let detail = if stderr.trim().is_empty() {
                     format!("exit status: {}", output.status)
                 } else {
@@ -436,7 +437,7 @@ impl LanguageServer for Backend {
                     &self.execution_summaries,
                     &uri,
                     line as u32,
-                    parse_run_summary(stderr.as_ref(), "", false),
+                    parse_run_summary(stderr.as_ref(), stdout.as_ref(), false),
                 );
                 self.client
                     .show_message(MessageType::ERROR, format!("hurl run failed: {detail}"))
