@@ -21,10 +21,6 @@ jobs:
             target: x86_64-unknown-linux-gnu
             ext: ""
             archive: tar.gz
-          - runner: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-            ext: ""
-            archive: tar.gz
           - runner: macos-latest
             target: aarch64-apple-darwin
             ext: ""
@@ -43,14 +39,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           target: ${{ matrix.target }}
-      - name: Install cross
+      - name: Install Linux native dependencies
         if: ${{ runner.os == 'Linux' }}
-        run: cargo install cross --git https://github.com/cross-rs/cross
-      - name: Build (Linux via cross)
-        if: ${{ runner.os == 'Linux' }}
-        run: cross build --release --package hurl-lsp --target ${{ matrix.target }}
-      - name: Build (macOS/Windows via cargo)
-        if: ${{ runner.os != 'Linux' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxml2-dev pkg-config
+      - name: Build
         run: cargo build --release --package hurl-lsp --target ${{ matrix.target }}
       - name: Package
         shell: bash
