@@ -12,17 +12,20 @@ on:
         type: boolean
         default: true
 
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   binaries:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            ext: ""
-            archive: tar.gz
-          - runner: ubuntu-latest
-            target: x86_64-unknown-linux-musl
             ext: ""
             archive: tar.gz
           - runner: macos-latest
@@ -43,14 +46,27 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           target: ${{ matrix.target }}
-      - name: Install cross
+      - name: Install Linux native dependencies
         if: ${{ runner.os == 'Linux' }}
-        run: cargo install cross --git https://github.com/cross-rs/cross
-      - name: Build (Linux via cross)
-        if: ${{ runner.os == 'Linux' }}
-        run: cross build --release --package hurl-lsp --target ${{ matrix.target }}
-      - name: Build (macOS/Windows via cargo)
-        if: ${{ runner.os != 'Linux' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxml2-dev pkg-config
+      - name: Install Windows native dependencies
+        if: ${{ runner.os == 'Windows' }}
+        shell: pwsh
+        run: |
+          if ($env:VCPKG_INSTALLATION_ROOT) {
+            $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          } elseif (Test-Path "C:\vcpkg") {
+            $vcpkgRoot = "C:\vcpkg"
+          } else {
+            throw "Cannot find vcpkg installation root."
+          }
+          & "$vcpkgRoot\vcpkg.exe" install libxml2:x64-windows
+          "VCPKG_ROOT=$vcpkgRoot" >> $env:GITHUB_ENV
+          "VCPKGRS_TRIPLET=x64-windows" >> $env:GITHUB_ENV
+          "VCPKGRS_DYNAMIC=1" >> $env:GITHUB_ENV
+      - name: Build
         run: cargo build --release --package hurl-lsp --target ${{ matrix.target }}
       - name: Package
         shell: bash
@@ -69,10 +85,19 @@ jobs:
         with:
           name: hurl-lsp-${{ matrix.target }}
           path: hurl-lsp-*
+
+  publish:
+    needs: binaries
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run != true) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v5
+        with:
+          path: dist
       - name: Publish GitHub Release assets
-        if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run != true) }}
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            hurl-lsp-*.tar.gz
-            hurl-lsp-*.zip
+            dist/**/*.tar.gz
+            dist/**/*.zip
