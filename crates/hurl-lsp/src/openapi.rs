@@ -133,26 +133,58 @@ fn extract_request_body_fields(
             ) {
                 continue;
             }
-            let props = op
+            let schema = op
                 .get("requestBody")
                 .and_then(|rb| rb.get("content"))
                 .and_then(|c| c.get("application/json"))
-                .and_then(|j| j.get("schema"))
-                .and_then(|s| s.get("properties"))
-                .and_then(|p| p.as_object());
-            let Some(props) = props else {
+                .and_then(|j| j.get("schema"));
+            let Some(schema) = schema else {
                 continue;
             };
+            let mut properties = BTreeSet::new();
+            collect_schema_property_names(schema, value, &mut properties, 0);
+            if properties.is_empty() {
+                continue;
+            }
 
             let key = format!("{} {}", method_upper, path);
             let entry = out.entry(key).or_insert_with(BTreeSet::new);
-            for property_name in props.keys() {
-                entry.insert(property_name.clone());
-            }
+            entry.extend(properties);
         }
     }
 
     out
+}
+
+fn collect_schema_property_names(
+    schema: &serde_json::Value,
+    root: &serde_json::Value,
+    out: &mut BTreeSet<String>,
+    depth: usize,
+) {
+    if depth > 8 {
+        return;
+    }
+
+    if let Some(properties) = schema.get("properties").and_then(|props| props.as_object()) {
+        out.extend(properties.keys().cloned());
+    }
+
+    if let Some(reference) = schema.get("$ref").and_then(|item| item.as_str()) {
+        if let Some(pointer) = reference.strip_prefix('#') {
+            if let Some(resolved) = root.pointer(pointer) {
+                collect_schema_property_names(resolved, root, out, depth + 1);
+            }
+        }
+    }
+
+    for keyword in ["allOf", "oneOf", "anyOf"] {
+        if let Some(items) = schema.get(keyword).and_then(|item| item.as_array()) {
+            for item in items {
+                collect_schema_property_names(item, root, out, depth + 1);
+            }
+        }
+    }
 }
 
 fn base_dir_from_uri(uri: &Url) -> Option<PathBuf> {
@@ -267,6 +299,26 @@ mod tests {
         fs::write(
             base.join("openapi.yaml"),
             "openapi: 3.0.0\npaths:\n  /users:\n    post:\n      requestBody:\n        content:\n          application/json:\n            schema:\n              type: object\n              properties:\n                email:\n                  type: string\n                age:\n                  type: integer\n",
+        )
+        .expect("write yaml");
+        let uri = Url::from_file_path(base.join("test.hurl")).expect("uri");
+
+        let fields = load_openapi_request_body_fields_with_roots(&uri, std::slice::from_ref(&base));
+        let key = "POST /users".to_string();
+        let props = fields.get(&key).expect("POST /users fields");
+        assert!(props.contains("email"));
+        assert!(props.contains("age"));
+
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn loads_request_body_fields_from_ref_schema() {
+        let base = tmp_dir("hurl-lsp-openapi-body-ref");
+        fs::create_dir_all(&base).expect("mkdir");
+        fs::write(
+            base.join("openapi.yaml"),
+            "openapi: 3.0.0\npaths:\n  /users:\n    post:\n      requestBody:\n        content:\n          application/json:\n            schema:\n              $ref: '#/components/schemas/CreateUser'\ncomponents:\n  schemas:\n    CreateUser:\n      type: object\n      properties:\n        email:\n          type: string\n        age:\n          type: integer\n",
         )
         .expect("write yaml");
         let uri = Url::from_file_path(base.join("test.hurl")).expect("uri");

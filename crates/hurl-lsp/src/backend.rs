@@ -82,6 +82,16 @@ impl Backend {
     }
 }
 
+fn apply_document_change(
+    documents: &DocumentStore,
+    execution_diagnostics: &DashMap<Url, Vec<Diagnostic>>,
+    uri: Url,
+    text: String,
+) {
+    execution_diagnostics.remove(&uri);
+    documents.insert(uri, text);
+}
+
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
@@ -141,8 +151,12 @@ impl LanguageServer for Backend {
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         if let Some(change) = params.content_changes.into_iter().next() {
             let uri = params.text_document.uri;
-            self.execution_diagnostics.remove(&uri);
-            self.documents.insert(uri.clone(), change.text.clone());
+            apply_document_change(
+                &self.documents,
+                &self.execution_diagnostics,
+                uri.clone(),
+                change.text.clone(),
+            );
             self.publish_diagnostics(uri, &change.text).await;
         }
     }
@@ -446,4 +460,27 @@ fn position_for_end(text: &str) -> Position {
     }
 
     Position::new(line, character)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apply_document_change_clears_execution_diagnostics() {
+        let documents = DocumentStore::default();
+        let execution_diagnostics = DashMap::new();
+        let uri = Url::parse("file:///tmp/test.hurl").expect("uri");
+        execution_diagnostics.insert(uri.clone(), vec![Diagnostic::default()]);
+
+        apply_document_change(
+            &documents,
+            &execution_diagnostics,
+            uri.clone(),
+            "GET /health".to_string(),
+        );
+
+        assert!(execution_diagnostics.get(&uri).is_none());
+        assert_eq!(documents.get(&uri).as_deref(), Some("GET /health"));
+    }
 }

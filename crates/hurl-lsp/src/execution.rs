@@ -62,10 +62,21 @@ pub fn execution_diagnostics_for_entry_failure(
 }
 
 fn parse_failed_assert(detail: &str) -> Option<&str> {
-    detail
-        .split_once("assert failed:")
-        .map(|(_, suffix)| suffix.trim())
-        .filter(|value| !value.is_empty())
+    const MARKER: &[u8] = b"assert failed:";
+    for (idx, _) in detail.char_indices() {
+        let end = idx + MARKER.len();
+        if end > detail.len() {
+            break;
+        }
+        if detail.as_bytes()[idx..end].eq_ignore_ascii_case(MARKER) {
+            let suffix = detail.get(end..)?.trim();
+            if !suffix.is_empty() {
+                return Some(suffix);
+            }
+            return None;
+        }
+    }
+    None
 }
 
 fn failure_diag(line: u32, detail: &str) -> Diagnostic {
@@ -98,6 +109,15 @@ mod tests {
         let source = "POST /users\nHTTP 201\n[Asserts]\nstatus == 201\njsonpath \"$.id\" exists\n";
         let diagnostics =
             execution_diagnostics_for_entry_failure(source, 0, "assert failed: status == 201");
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].range.start.line, 3);
+    }
+
+    #[test]
+    fn matches_failed_assert_marker_case_insensitively() {
+        let source = "POST /users\nHTTP 201\n[Asserts]\nstatus == 201\n";
+        let diagnostics =
+            execution_diagnostics_for_entry_failure(source, 0, "Assert Failed: status == 201");
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].range.start.line, 3);
     }
