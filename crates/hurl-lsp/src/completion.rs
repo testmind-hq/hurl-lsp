@@ -2,7 +2,7 @@ use crate::syntax::{
     is_identifier, method_from_line, section_label, section_name_from_line,
     visible_variables_before_line, HTTP_METHODS, SECTION_NAMES,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use tower_lsp::lsp_types::{CompletionItem, CompletionItemKind, Position};
 
 const ASSERTS: &[(&str, &str)] = &[
@@ -22,7 +22,13 @@ const CONTENT_TYPES: &[&str] = &[
 
 #[cfg(test)]
 pub fn completions(text: &str, position: Position) -> Vec<CompletionItem> {
-    completions_with_external(text, position, &BTreeSet::new(), &BTreeSet::new())
+    completions_with_external(
+        text,
+        position,
+        &BTreeSet::new(),
+        &BTreeSet::new(),
+        &BTreeMap::new(),
+    )
 }
 
 pub fn completions_with_external(
@@ -30,6 +36,7 @@ pub fn completions_with_external(
     position: Position,
     external_variables: &BTreeSet<String>,
     openapi_paths: &BTreeSet<String>,
+    openapi_body_fields: &BTreeMap<String, BTreeSet<String>>,
 ) -> Vec<CompletionItem> {
     let line_idx = position.line as usize;
     let line = text.lines().nth(position.line as usize).unwrap_or_default();
@@ -90,6 +97,24 @@ pub fn completions_with_external(
                 ..Default::default()
             })
             .collect();
+    }
+
+    if let Some(key_prefix) = json_body_key_prefix(prefix) {
+        if let Some(operation_key) = current_operation_key(text, line_idx) {
+            if let Some(fields) = openapi_body_fields.get(&operation_key) {
+                return fields
+                    .iter()
+                    .filter(|field| field.starts_with(key_prefix))
+                    .map(|field| CompletionItem {
+                        label: field.clone(),
+                        kind: Some(CompletionItemKind::FIELD),
+                        insert_text: Some(field.clone()),
+                        detail: Some("OpenAPI request body field".into()),
+                        ..Default::default()
+                    })
+                    .collect();
+            }
+        }
     }
 
     HTTP_METHODS
@@ -156,6 +181,44 @@ fn request_path_prefix(prefix: &str) -> Option<&str> {
     Some(path)
 }
 
+fn json_body_key_prefix(prefix: &str) -> Option<&str> {
+    let idx = prefix.rfind('"')?;
+    let tail = &prefix[(idx + 1)..];
+    if tail.contains('"') {
+        return None;
+    }
+    Some(tail)
+}
+
+fn current_operation_key(text: &str, line_idx: usize) -> Option<String> {
+    let mut method = None::<String>;
+    let mut path = None::<String>;
+    let mut in_body = false;
+
+    for (idx, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        if let Some(_m) = method_from_line(trimmed) {
+            let mut parts = trimmed.split_whitespace();
+            let m = parts.next().unwrap_or_default();
+            let p = parts.next().unwrap_or_default();
+            method = Some(m.to_string());
+            path = Some(p.to_string());
+            in_body = true;
+        } else if trimmed.starts_with("HTTP ") || section_name_from_line(trimmed).is_some() {
+            in_body = false;
+        }
+
+        if idx == line_idx {
+            break;
+        }
+    }
+
+    if !in_body {
+        return None;
+    }
+    Some(format!("{} {}", method?, path?))
+}
+
 fn known_variables(
     text: &str,
     line_idx: usize,
@@ -196,7 +259,13 @@ mod tests {
         let text = "GET /users/{{ho";
         let mut vars = BTreeSet::new();
         vars.insert("host".to_string());
-        let items = completions_with_external(text, Position::new(0, 15), &vars, &BTreeSet::new());
+        let items = completions_with_external(
+            text,
+            Position::new(0, 15),
+            &vars,
+            &BTreeSet::new(),
+            &BTreeMap::new(),
+        );
         assert!(items.iter().any(|item| item.label == "host"));
     }
 
@@ -206,9 +275,35 @@ mod tests {
         let mut paths = BTreeSet::new();
         paths.insert("/users".to_string());
         paths.insert("/orders".to_string());
-        let items = completions_with_external(text, Position::new(0, 7), &BTreeSet::new(), &paths);
+        let items = completions_with_external(
+            text,
+            Position::new(0, 7),
+            &BTreeSet::new(),
+            &paths,
+            &BTreeMap::new(),
+        );
         assert!(items.iter().any(|item| item.label == "/users"));
         assert!(!items.iter().any(|item| item.label == "/orders"));
+    }
+
+    #[test]
+    fn returns_openapi_body_field_completion() {
+        let text = "POST /users\n{\n  \"e\n}\nHTTP 201\n";
+        let mut fields = BTreeMap::new();
+        let mut props = BTreeSet::new();
+        props.insert("email".to_string());
+        props.insert("age".to_string());
+        fields.insert("POST /users".to_string(), props);
+
+        let items = completions_with_external(
+            text,
+            Position::new(2, 4),
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            &fields,
+        );
+        assert!(items.iter().any(|item| item.label == "email"));
+        assert!(!items.iter().any(|item| item.label == "age"));
     }
 
     #[test]

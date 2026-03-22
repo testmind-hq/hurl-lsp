@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
@@ -37,6 +38,31 @@ pub fn load_openapi_paths_with_roots(
     paths
 }
 
+pub fn load_openapi_request_body_fields_with_roots(
+    document_uri: &Url,
+    workspace_roots: &[PathBuf],
+) -> BTreeMap<String, BTreeSet<String>> {
+    let Some(base_dir) = base_dir_from_uri(document_uri) else {
+        return BTreeMap::new();
+    };
+    let dirs = bounded_ancestor_dirs(base_dir, workspace_roots);
+    let mut fields = BTreeMap::<String, BTreeSet<String>>::new();
+
+    for dir in dirs {
+        for name in OPENAPI_FILES {
+            let file_path = dir.join(name);
+            if !file_path.exists() || !file_path.is_file() {
+                continue;
+            }
+            let parsed = parse_openapi_request_body_fields(&file_path);
+            for (key, props) in parsed {
+                fields.entry(key).or_default().extend(props);
+            }
+        }
+    }
+    fields
+}
+
 fn parse_openapi_paths(path: &Path) -> BTreeSet<String> {
     let Ok(content) = fs::read_to_string(path) else {
         return BTreeSet::new();
@@ -51,6 +77,20 @@ fn parse_openapi_paths(path: &Path) -> BTreeSet<String> {
     extract_paths(value.as_ref())
 }
 
+fn parse_openapi_request_body_fields(path: &Path) -> BTreeMap<String, BTreeSet<String>> {
+    let Ok(content) = fs::read_to_string(path) else {
+        return BTreeMap::new();
+    };
+    let value = if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+        serde_json::from_str::<serde_json::Value>(&content).ok()
+    } else {
+        serde_yaml::from_str::<serde_yaml::Value>(&content)
+            .ok()
+            .and_then(|yaml| serde_json::to_value(yaml).ok())
+    };
+    extract_request_body_fields(value.as_ref())
+}
+
 fn extract_paths(value: Option<&serde_json::Value>) -> BTreeSet<String> {
     let Some(value) = value else {
         return BTreeSet::new();
@@ -60,6 +100,59 @@ fn extract_paths(value: Option<&serde_json::Value>) -> BTreeSet<String> {
     };
 
     paths.keys().cloned().collect()
+}
+
+fn extract_request_body_fields(
+    value: Option<&serde_json::Value>,
+) -> BTreeMap<String, BTreeSet<String>> {
+    let mut out = BTreeMap::new();
+    let Some(value) = value else {
+        return out;
+    };
+    let Some(paths) = value.get("paths").and_then(|item| item.as_object()) else {
+        return out;
+    };
+
+    for (path, operations) in paths {
+        let Some(ops) = operations.as_object() else {
+            continue;
+        };
+        for (method, op) in ops {
+            let method_upper = method.to_ascii_uppercase();
+            if !matches!(
+                method_upper.as_str(),
+                "GET"
+                    | "POST"
+                    | "PUT"
+                    | "PATCH"
+                    | "DELETE"
+                    | "HEAD"
+                    | "OPTIONS"
+                    | "CONNECT"
+                    | "TRACE"
+            ) {
+                continue;
+            }
+            let props = op
+                .get("requestBody")
+                .and_then(|rb| rb.get("content"))
+                .and_then(|c| c.get("application/json"))
+                .and_then(|j| j.get("schema"))
+                .and_then(|s| s.get("properties"))
+                .and_then(|p| p.as_object());
+            let Some(props) = props else {
+                continue;
+            };
+
+            let key = format!("{} {}", method_upper, path);
+            let entry = out.entry(key).or_insert_with(BTreeSet::new);
+            for property_name in props.keys() {
+                entry.insert(property_name.clone());
+            }
+        }
+    }
+
+    out
 }
 
 fn base_dir_from_uri(uri: &Url) -> Option<PathBuf> {
@@ -163,6 +256,26 @@ mod tests {
         let paths = load_openapi_paths_with_roots(&uri, std::slice::from_ref(&workspace));
         assert!(paths.contains("/inner"));
         assert!(!paths.contains("/outer"));
+
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn loads_request_body_fields_from_yaml() {
+        let base = tmp_dir("hurl-lsp-openapi-body-yaml");
+        fs::create_dir_all(&base).expect("mkdir");
+        fs::write(
+            base.join("openapi.yaml"),
+            "openapi: 3.0.0\npaths:\n  /users:\n    post:\n      requestBody:\n        content:\n          application/json:\n            schema:\n              type: object\n              properties:\n                email:\n                  type: string\n                age:\n                  type: integer\n",
+        )
+        .expect("write yaml");
+        let uri = Url::from_file_path(base.join("test.hurl")).expect("uri");
+
+        let fields = load_openapi_request_body_fields_with_roots(&uri, std::slice::from_ref(&base));
+        let key = "POST /users".to_string();
+        let props = fields.get(&key).expect("POST /users fields");
+        assert!(props.contains("email"));
+        assert!(props.contains("age"));
 
         let _ = fs::remove_dir_all(base);
     }
