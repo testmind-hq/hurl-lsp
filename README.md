@@ -26,9 +26,22 @@ diagnostics, completion, formatting, outline, and more.
 
 Until now, editing `.hurl` files in any editor meant writing in the dark — no completions, no diagnostics, no inline docs. **`hurl-lsp`** fills that gap.
 
-Built in Rust on top of [`tower-lsp`](https://github.com/ebkalderon/tower-lsp) and the official [`hurl_core`](https://crates.io/crates/hurl_core) parser, `hurl-lsp` delivers accurate, fast, and extensible editor support for `.hurl` files across all major editors.
+Built in Rust on top of [`tower-lsp`](https://github.com/ebkalderon/tower-lsp) and the official [`hurl_core`](https://crates.io/crates/hurl_core) parser, `hurl-lsp` is currently focused on a solid v0 baseline: core LSP features plus a working VSCode extension.
 
-`hurl-lsp` is a **standalone tool** — it works independently of any platform and requires no account or backend. Optionally, it integrates with [TestMind](https://github.com/testmind-hq) to surface CI execution results directly in your editor.
+Current implementation status:
+
+- Rust language server with diagnostics, completions, hover, formatting, outline, and variable definition jump
+- VSCode extension with `.hurl` language registration, TextMate grammar, snippets, and language client
+- macOS binary download flow inside the VSCode extension
+
+Not implemented yet:
+
+- Variable file integration
+- Code Lens actions and request execution
+- Inline execution results
+- VSCode webview panels
+- Zed / Helix extensions
+- TestMind integration
 
 ---
 
@@ -36,225 +49,68 @@ Built in Rust on top of [`tower-lsp`](https://github.com/ebkalderon/tower-lsp) a
 
 ### Diagnostics
 
-Real-time error detection as you type — invalid HTTP methods, malformed section names, unknown assert functions, undefined variable references, and more.
+Real-time diagnostics while editing `.hurl` files:
 
-<!-- screenshot placeholder -->
-> 📸 _Screenshot: Inline diagnostics in VSCode_
-> `[assets/screenshots/diagnostics.png]`
-
----
+- Parser-backed syntax errors from `hurl_core`
+- Invalid HTTP method detection
+- Invalid section name detection
+- Undefined variable warnings (`{{variable}}`)
+- Duplicate section warnings in one request block
+- Invalid `HTTP` status code format detection
 
 ### Completion
 
 Context-aware completions triggered automatically:
 
 - **HTTP Methods** — `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, ...
-- **Section Keywords** — `[QueryStringParameters]`, `[Headers]`, `[Captures]`, `[Asserts]`, `[Options]`, ...
+- **Section Keywords** — `[Query]`, `[Form]`, `[Multipart]`, `[Headers]`, `[Captures]`, `[Asserts]`, `[Options]`, ...
 - **Assert Functions** — `jsonpath`, `xpath`, `regex`, `header`, `status`, `duration`, ...
-- **Variable References** — `{{` triggers completions from captures and variable files
-
-<!-- screenshot placeholder -->
-> 📸 _Screenshot: Section keyword completion_
-> `[assets/screenshots/completion.png]`
-
----
+- **Content-Type values** — common MIME types for request headers
+- **Captured Variables** — `{{` context completion from same-file `[Captures]`
 
 ### Hover Documentation
 
-Hover over any keyword to see inline documentation — section descriptions, assert function signatures, and usage examples.
+Hover over methods, sections, and assert functions to see short inline docs.
 
-<!-- screenshot placeholder -->
-> 📸 _Screenshot: Hover docs on assert function_
-> `[assets/screenshots/hover.png]`
+### Go To Definition
 
----
+Variable references can jump to their same-file `[Captures]` definition.
 
 ### Built-in Formatter
 
-Format `.hurl` files directly from your editor via `Format Document`. No need to install `hurlfmt` separately — formatting is built into the server using the official `hurl_core` AST pretty-printer.
-
----
-
-### Variable File Integration
-
-`hurl-lsp` automatically reads variable definitions from common file conventions:
-
-```
-.hurl-vars
-vars.env
-hurl.env
-.env
-```
-
-This enables:
-- `{{variable}}` completion from known variables
-- Go to Definition — jump to where a variable is declared
-- Undefined variable warnings
-
----
+`Format Document` is backed by official `hurlfmt::format::format_text(..., false)` through LSP.
 
 ### Document Outline
 
-When `.hurl` files include [metadata annotations](#metadata-annotation-format), `hurl-lsp` builds a rich structured outline of all test cases. Entries without annotations are still shown as plain `Method + Path` entries — they are never hidden.
+The server exposes metadata-first document symbols with request-level fallback:
 
 ```
 📁 users.hurl
-│
-├── 🔗 TC-CHAIN-001  User lifecycle (create → query → delete)  [P0]
-│   ├── 🔧 setup     Create test user          step-setup-user
-│   ├── 🧪 test      Query the created user    step-test-get
-│   └── 🧹 teardown  Cleanup: delete user      step-teardown
-│
-├── 🟥 P0
-│   ├── TC-0001  POST /users - valid input, normal creation
-│   └── TC-0002  POST /users - minimal required fields
-│
+├── 🔗 TC-CHAIN-001 用户完整生命周期 [P0]
+│   ├── 🔧 Create user step-setup
+│   └── 🧪 Validate user step-test
 ├── 🟧 P1
-│   └── TC-0042  POST /users - invalid email format   [equivalence_partitioning]
-│
-└── ○ POST /users                        ← no metadata, shows Method + Path only
+│   └── TC-0042 Invalid email
+└── ○ GET /health
 ```
-
-<!-- screenshot placeholder -->
-> 📸 _Screenshot: Document outline in VSCode_
-> `[assets/screenshots/outline.png]`
-
----
-
-### Code Lens
-
-Inline action buttons and request summaries appear above every entry:
-
-```
-📋 TC-0042  P1  equivalence_partitioning  │ 0 headers  │ 2 asserts
-▶ Run    ⚡ Run with vars    📋 Copy as curl
-POST {{base_url}}/users
-```
-
-For chained entries, dependency annotations are shown with jump-to-source support:
-
-```
-🧪 test · TC-CHAIN-001  │  📥 depends on: user_id ← step-setup-user (line 12)
-▶ Run    ⚡ Run with vars    📋 Copy as curl
-GET {{base_url}}/users/{{user_id}}
-```
-
----
-
-### Inline Execution Results
-
-After running a request, assertion results are displayed inline — no need to switch to a terminal or output panel:
-
-```hurl
-[Asserts]
-jsonpath "$.code"  == "validation_error"   ✅  actual: "validation_error"
-jsonpath "$.field" == "email"              ❌  actual: "username"
-duration < 500                             ✅  actual: 230ms
-```
-
-<!-- screenshot placeholder -->
-> 📸 _Screenshot: Inline execution results_
-> `[assets/screenshots/inline-results.png]`
-
----
-
-### VSCode Webview Panel _(VSCode only)_
-
-A dedicated side panel provides two views:
-
-**Single Entry View** — renders the current entry as a structured card with live execution results.
-
-**Chain Flow View** — renders chained test cases as an interactive dependency graph. Node colors reflect execution state (gray = not run, green = passed, red = failed). Click any node to jump to the corresponding source line.
-
-<!-- screenshot placeholder -->
-> 📸 _Screenshot: VSCode chain flow panel_
-> `[assets/screenshots/webview-chain.png]`
-
----
-
-## Metadata Annotation Format
-
-`hurl-lsp` reads structured metadata from `# key=value` comments above each entry. These annotations are produced by [CaseForge](https://github.com/testmind-hq/caseforge) and can also be written by hand.
-
-**Supported keys:**
-
-| Key | Values | Description |
-|-----|--------|-------------|
-| `case_id` | string | Unique case identifier |
-| `case_kind` | `single` \| `chain` | Case type |
-| `priority` | `P0` \| `P1` \| `P2` | Priority level |
-| `step_id` | string | Step identifier (chain cases) |
-| `step_type` | `setup` \| `test` \| `teardown` | Step role (chain cases) |
-| `title` | string | Human-readable title for outline and hover display |
-| `technique` | string | Testing technique tag (e.g. `equivalence_partitioning`) |
-| `depends_on` | comma-separated step_ids | Explicit step dependency declaration |
-
-Comments that do not match a whitelisted key (e.g. `# ═══` dividers, freeform descriptions) are ignored by the parser.
-
-**Single case example:**
-
-```hurl
-# case_id=TC-0042
-# case_kind=single
-# priority=P1
-# step_type=test
-# technique=equivalence_partitioning
-# title=POST /users - invalid email format
-POST {{base_url}}/users
-Content-Type: application/json
-{ "name": "Test User", "email": "not-an-email" }
-HTTP 422
-[Asserts]
-jsonpath "$.code"  == "validation_error"
-jsonpath "$.field" == "email"
-```
-
-**Chain case example:**
-
-```hurl
-# case_id=TC-CHAIN-001
-# case_kind=chain
-# priority=P0
-
-# step_id=step-setup-user
-# step_type=setup
-# title=Create test user
-POST {{base_url}}/users
-Authorization: Bearer {{auth_token}}
-{ "name": "Markus Moen", "email": "markus@example.com" }
-HTTP 201
-[Captures]
-user_id: jsonpath "$.id"
-
-# step_id=step-test-get
-# step_type=test
-# title=Query the created user
-# depends_on=step-setup-user
-GET {{base_url}}/users/{{user_id}}
-Authorization: Bearer {{auth_token}}
-HTTP 200
-
-# step_id=step-teardown
-# step_type=teardown
-# title=Cleanup: delete user
-# depends_on=step-test-get
-DELETE {{base_url}}/users/{{user_id}}
-Authorization: Bearer {{auth_token}}
-HTTP 200
-```
-
-Metadata annotations are **entirely optional**. All core LSP features work without them.
-
----
 
 ## Editor Support
 
-| Editor | Installation | Syntax Highlight | LSP | Webview Panel |
-|--------|-------------|-----------------|-----|---------------|
-| **VSCode** | VS Marketplace extension (auto binary management) | ✅ | ✅ | ✅ |
-| **Zed** | Zed Extensions + local binary | ✅ Tree-sitter | ✅ | ❌ |
-| **Helix** | Manual config / built-in (pending PR) | ✅ Tree-sitter | ✅ | ❌ |
-| **Neovim** | nvim-lspconfig | via plugin | ✅ | ❌ |
+| Editor | Status | Notes |
+|--------|--------|-------|
+| **VSCode** | Implemented | Extension included in `editors/vscode`, with local binary config and macOS auto-download flow |
+| **Helix** | Manual setup | Server is usable manually once binary is installed |
+| **Neovim** | Manual setup | Server is usable manually via LSP config |
+| **Zed** | Planned | No extension implementation yet |
+
+## Platform Support
+
+Current automatic binary management in the VSCode extension supports:
+
+- `aarch64-apple-darwin`
+- `x86_64-apple-darwin`
+
+Linux and Windows release artifacts are planned, but not part of the current v0 baseline.
 
 ---
 
@@ -262,10 +118,10 @@ Metadata annotations are **entirely optional**. All core LSP features work witho
 
 ### VSCode
 
-Install the **Hurl** extension from the VS Marketplace. The extension automatically downloads and manages the correct binary for your platform — no manual steps required.
+Install the **Hurl** extension from the VS Marketplace. The extension currently auto-downloads binaries on macOS only.
 
 ```
-ext install testmind-hq.hurl
+ext install yuchou87.vscode-hurl
 ```
 
 ### Zed
@@ -317,40 +173,28 @@ cargo install hurl-lsp
 brew install hurl-lsp
 ```
 
-Pre-built binaries for Linux (`x86_64`, `musl`), macOS (Intel + Apple Silicon), and Windows are available on the [Releases](https://github.com/testmind-hq/hurl-lsp/releases) page.
+Pre-built binaries for macOS (Intel + Apple Silicon) are available on the [Releases](https://github.com/yuchou87/hurl-lsp/releases) page.
 
 ---
 
-## TestMind Integration _(optional)_
+## TestMind Integration _(planned)_
 
-When configured, `hurl-lsp` pulls CI execution results from [TestMind](https://github.com/testmind-hq) and displays them as inline diagnostics — without opening the CI platform.
-
-Add `.hurl-lsp.toml` to your project root:
-
-```toml
-[testmind]
-endpoint      = "https://your-testmind-instance.com"
-token         = "tm_xxxxxxxxxxxx"
-branch        = "main"   # CI branch to pull results from
-poll_interval = 60       # seconds; 0 = fetch once on file open
-```
-
-This integration is **entirely optional**. `hurl-lsp` is fully functional without it.
+CI result feedback integration from TestMind is a future phase and is not implemented in current builds.
 
 ---
 
 ## Roadmap
 
-### Phase 1 — Core LSP _(in progress)_
+### Phase 1 — Core LSP _(baseline delivered)_
 
-- [ ] Project scaffolding (Cargo workspace + tower-lsp)
-- [ ] Document state management (`did_open` / `did_change`)
-- [ ] Syntax diagnostics via `hurl_core`
-- [ ] HTTP method + section keyword completion
-- [ ] Assert function completion
-- [ ] Hover documentation
-- [ ] Built-in formatter
-- [ ] CI (build + test + clippy)
+- [x] Project scaffolding (Cargo workspace + tower-lsp)
+- [x] Document state management (`did_open` / `did_change`)
+- [x] Syntax diagnostics via `hurl_core`
+- [x] HTTP method + section keyword completion
+- [x] Assert function completion
+- [x] Hover documentation
+- [x] Built-in formatter (`hurlfmt`)
+- [x] CI (build + test + clippy)
 
 ### Phase 2 — Editor Extensions + Distribution
 
@@ -364,10 +208,10 @@ This integration is **entirely optional**. `hurl-lsp` is fully functional withou
 
 ### Phase 3 — Differentiating Features
 
-- [ ] Variable file integration (completion + Go to Definition + undefined warnings)
+- [ ] Variable file integration (workspace env files + cross-file resolution)
 - [ ] Code Lens — run, run with vars, copy as curl
 - [ ] Inline execution result display
-- [ ] Document outline with metadata support (`documentSymbol`)
+- [x] Document outline with metadata support (`documentSymbol`)
 - [ ] Chain case detection and dependency annotation
 - [ ] OpenAPI / Swagger integration (URL + body completion, auto-generate asserts)
 
@@ -404,25 +248,20 @@ hurl-lsp/
 │   └── hurl-lsp/              # LSP server core (Rust)
 │       └── src/
 │           ├── main.rs
-│           ├── backend.rs     # LanguageServer trait impl
+│           ├── backend.rs
 │           ├── diagnostics.rs
 │           ├── completion.rs
 │           ├── hover.rs
 │           ├── formatting.rs
-│           ├── code_lens.rs
-│           ├── definition.rs
-│           ├── variables.rs
-│           ├── outline.rs     # documentSymbol + metadata parser
-│           └── openapi.rs
+│           ├── symbols.rs
+│           ├── metadata.rs
+│           └── definition.rs
 ├── editors/
-│   ├── vscode/                # VSCode extension (TypeScript)
-│   ├── zed/                   # Zed extension (Rust → WASM)
-│   └── helix/                 # Configuration docs
+│   └── vscode/                # VSCode extension (TypeScript)
 └── .github/
     └── workflows/
         ├── ci.yml
-        ├── release.yml        # Multi-platform cross-compilation
-        └── publish.yml        # VS Marketplace + Zed Extensions
+        └── release.yml
 ```
 
 ---
@@ -432,7 +271,7 @@ hurl-lsp/
 Contributions are welcome. If you plan to work on a significant feature, please open an issue first to discuss the approach.
 
 ```sh
-git clone https://github.com/testmind-hq/hurl-lsp
+git clone https://github.com/yuchou87/hurl-lsp
 cd hurl-lsp
 cargo build
 cargo test
@@ -455,5 +294,4 @@ cargo clippy
 
 ## License
 
-MIT © [TestMind HQ](https://github.com/testmind-hq)
-
+MIT © [yuchou87](https://github.com/yuchou87)

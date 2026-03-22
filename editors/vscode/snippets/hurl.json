@@ -1,0 +1,31 @@
+{
+  "GET Request": {
+    "prefix": "get",
+    "body": [
+      "GET ${1:https://example.com}",
+      "HTTP ${2:200}"
+    ],
+    "description": "Basic GET request"
+  },
+  "POST JSON Request": {
+    "prefix": "post-json",
+    "body": [
+      "POST ${1:https://example.com}",
+      "Content-Type: application/json",
+      "",
+      "{",
+      "  \"${2:key}\": \"${3:value}\"",
+      "}",
+      "HTTP ${4:200}"
+    ],
+    "description": "POST request with JSON body"
+  },
+  "JSON Assert": {
+    "prefix": "assert-json",
+    "body": [
+      "[Asserts]",
+      "jsonpath \"${1:$.field}\" == ${2:\"value\"}"
+    ],
+    "description": "JSONPath assert block"
+  }
+}
