@@ -1,0 +1,31 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  binaries:
+    strategy:
+      matrix:
+        include:
+          - runner: macos-latest
+            target: aarch64-apple-darwin
+          - runner: macos-13
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          target: ${{ matrix.target }}
+      - run: cargo build --release --package hurl-lsp --target ${{ matrix.target }}
+      - run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/hurl-lsp dist/hurl-lsp
+          tar -czf hurl-lsp-${version}-${{ matrix.target }}.tar.gz -C dist hurl-lsp
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: hurl-lsp-*.tar.gz

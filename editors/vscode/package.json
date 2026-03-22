@@ -1,0 +1,74 @@
+{
+  "name": "vscode-hurl",
+  "displayName": "Hurl",
+  "description": "VSCode support for Hurl powered by hurl-lsp",
+  "version": "0.1.0",
+  "publisher": "yuchou87",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Programming Languages"],
+  "activationEvents": [
+    "onLanguage:hurl",
+    "onCommand:hurl.restartLanguageServer"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "hurl",
+        "aliases": ["Hurl", "hurl"],
+        "extensions": [".hurl"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "hurl",
+        "scopeName": "source.hurl",
+        "path": "./syntaxes/hurl.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "hurl",
+        "path": "./snippets/hurl.json"
+      }
+    ],
+    "configuration": {
+      "title": "Hurl",
+      "properties": {
+        "hurl.server.path": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to a local hurl-lsp binary."
+        },
+        "hurl.server.trace": {
+          "type": "string",
+          "enum": ["off", "messages", "verbose"],
+          "default": "off",
+          "description": "Trace LSP communication for debugging."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "hurl.restartLanguageServer",
+        "title": "Hurl: Restart Language Server"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p ./",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.2",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.5.4",
+    "@vscode/vsce": "^3.0.0"
+  }
+}

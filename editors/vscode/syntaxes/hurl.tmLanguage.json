@@ -1,0 +1,44 @@
+{
+  "scopeName": "source.hurl",
+  "name": "Hurl",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#sections" },
+    { "include": "#methods" },
+    { "include": "#variables" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.hurl",
+          "match": "#.*$"
+        }
+      ]
+    },
+    "sections": {
+      "patterns": [
+        {
+          "name": "entity.name.section.hurl",
+          "match": "^\\s*\\[[A-Za-z]+\\]\\s*$"
+        }
+      ]
+    },
+    "methods": {
+      "patterns": [
+        {
+          "name": "keyword.control.method.hurl",
+          "match": "^\\s*(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\\b"
+        }
+      ]
+    },
+    "variables": {
+      "patterns": [
+        {
+          "name": "variable.other.hurl",
+          "match": "\\{\\{[^}]+\\}\\}"
+        }
+      ]
+    }
+  }
+}
