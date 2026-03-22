@@ -36,8 +36,6 @@ Current implementation status:
 
 Not implemented yet:
 
-- Variable file integration
-- Code Lens actions and request execution
 - Inline execution results
 - VSCode webview panels
 - Zed / Helix extensions
@@ -75,6 +73,20 @@ Hover over methods, sections, and assert functions to see short inline docs.
 ### Go To Definition
 
 Variable references can jump to their same-file `[Captures]` definition.
+When workspace variable files exist (`.hurl-vars`, `vars.env`, `hurl.env`, `.env`), definition and diagnostics can also resolve against those files.
+
+### Code Lens
+
+Per-request Code Lens is available with:
+- summary line (`method/path`, section counters)
+- `▶ Run` action (executes selected request entry via temporary hurl file)
+- `⚡ Run with vars` action (uses nearest `.hurl-vars` / `vars.env` / `hurl.env` / `.env` when found)
+- `📋 Copy as curl` action (returns generated curl text from request line + headers)
+
+### OpenAPI Path Completion
+
+When `openapi.yaml` / `openapi.yml` / `swagger.yaml` / `swagger.yml` / `swagger.json` is present in the workspace hierarchy,
+request lines can use OpenAPI `paths` keys for URL completion.
 
 ### Built-in Formatter
 
@@ -208,12 +220,12 @@ CI result feedback integration from TestMind is a future phase and is not implem
 
 ### Phase 3 — Differentiating Features
 
-- [ ] Variable file integration (workspace env files + cross-file resolution)
-- [ ] Code Lens — run, run with vars, copy as curl
+- [x] Variable file integration (workspace env files + cross-file resolution)
+- [~] Code Lens — run/run-with-vars/copy-as-curl implemented; clipboard integration and inline result rendering pending
 - [ ] Inline execution result display
+- [~] OpenAPI / Swagger integration (path completion implemented, schema/body/assert generation pending)
 - [x] Document outline with metadata support (`documentSymbol`)
 - [ ] Chain case detection and dependency annotation
-- [ ] OpenAPI / Swagger integration (URL + body completion, auto-generate asserts)
 
 ### Phase 4 — Ecosystem
 

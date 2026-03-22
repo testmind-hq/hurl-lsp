@@ -1,9 +1,25 @@
 use crate::{
-    completion::completions, definition::definition, diagnostics::collect_diagnostics,
-    formatting::format_document, hover::hover, symbols::document_symbols,
+    code_lens::{
+        build_curl_for_entry, code_lenses, extract_entry_text, COPY_AS_CURL_COMMAND, NOOP_COMMAND,
+        RUN_ENTRY_COMMAND, RUN_ENTRY_WITH_VARS_COMMAND,
+    },
+    completion::completions_with_external,
+    definition::definition_with_external,
+    diagnostics::collect_diagnostics_with_external,
+    formatting::format_document,
+    hover::hover_with_external,
+    openapi::load_openapi_paths_with_roots,
+    symbols::document_symbols,
+    variables::{load_workspace_variables_with_roots, pick_variable_file_with_roots},
 };
 use dashmap::DashMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::Write;
+use std::path::PathBuf;
 use std::sync::Arc;
+use tempfile::NamedTempFile;
+use tokio::process::Command as TokioCommand;
+use tokio::sync::RwLock;
 use tower_lsp::{jsonrpc::Result, lsp_types::*, Client, LanguageServer};
 use url::Url;
 
@@ -29,6 +45,7 @@ impl DocumentStore {
 pub struct Backend {
     client: Client,
     documents: Arc<DocumentStore>,
+    workspace_roots: Arc<RwLock<Vec<PathBuf>>>,
 }
 
 impl Backend {
@@ -36,6 +53,7 @@ impl Backend {
         Self {
             client,
             documents: Arc::new(DocumentStore::default()),
+            workspace_roots: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
@@ -43,8 +61,15 @@ impl Backend {
         self.documents.get(uri)
     }
 
+    async fn workspace_roots(&self) -> Vec<PathBuf> {
+        self.workspace_roots.read().await.clone()
+    }
+
     async fn publish_diagnostics(&self, uri: Url, text: &str) {
-        let diagnostics = collect_diagnostics(text);
+        let roots = self.workspace_roots().await;
+        let external = load_workspace_variables_with_roots(&uri, &roots);
+        let external_names: BTreeSet<String> = external.into_iter().map(|item| item.name).collect();
+        let diagnostics = collect_diagnostics_with_external(text, &external_names);
         self.client
             .publish_diagnostics(uri, diagnostics, None)
             .await;
@@ -53,7 +78,8 @@ impl Backend {
 
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
-    async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
+    async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        *self.workspace_roots.write().await = extract_workspace_roots(&params);
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
@@ -68,6 +94,18 @@ impl LanguageServer for Backend {
                 document_formatting_provider: Some(OneOf::Left(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
                 definition_provider: Some(OneOf::Left(true)),
+                code_lens_provider: Some(CodeLensOptions {
+                    resolve_provider: Some(false),
+                }),
+                execute_command_provider: Some(ExecuteCommandOptions {
+                    commands: vec![
+                        RUN_ENTRY_COMMAND.to_string(),
+                        RUN_ENTRY_WITH_VARS_COMMAND.to_string(),
+                        COPY_AS_CURL_COMMAND.to_string(),
+                        NOOP_COMMAND.to_string(),
+                    ],
+                    work_done_progress_options: WorkDoneProgressOptions::default(),
+                }),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -114,10 +152,16 @@ impl LanguageServer for Backend {
         let Some(text) = self.document_text(&uri) else {
             return Ok(None);
         };
+        let roots = self.workspace_roots().await;
+        let external = load_workspace_variables_with_roots(&uri, &roots);
+        let external_names: BTreeSet<String> = external.into_iter().map(|item| item.name).collect();
+        let openapi_paths = load_openapi_paths_with_roots(&uri, &roots);
 
-        Ok(Some(CompletionResponse::Array(completions(
+        Ok(Some(CompletionResponse::Array(completions_with_external(
             &text,
             params.text_document_position.position,
+            &external_names,
+            &openapi_paths,
         ))))
     }
 
@@ -127,8 +171,14 @@ impl LanguageServer for Backend {
         let Some(text) = self.document_text(&uri) else {
             return Ok(None);
         };
+        let roots = self.workspace_roots().await;
+        let external = load_workspace_variables_with_roots(&uri, &roots);
+        let external_map: BTreeMap<String, String> = external
+            .into_iter()
+            .map(|item| (item.name, item.value))
+            .collect();
 
-        Ok(hover(&text, position))
+        Ok(hover_with_external(&text, position, &external_map))
     }
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
@@ -163,6 +213,14 @@ impl LanguageServer for Backend {
         ))))
     }
 
+    async fn code_lens(&self, params: CodeLensParams) -> Result<Option<Vec<CodeLens>>> {
+        let uri = params.text_document.uri;
+        let Some(text) = self.document_text(&uri) else {
+            return Ok(None);
+        };
+        Ok(Some(code_lenses(&uri, &text)))
+    }
+
     async fn goto_definition(
         &self,
         params: GotoDefinitionParams,
@@ -172,9 +230,184 @@ impl LanguageServer for Backend {
         let Some(text) = self.document_text(&uri) else {
             return Ok(None);
         };
+        let roots = self.workspace_roots().await;
+        let external = load_workspace_variables_with_roots(&uri, &roots);
 
-        Ok(definition(&uri, &text, &text_document_position))
+        Ok(definition_with_external(
+            &uri,
+            &text,
+            &text_document_position,
+            &external,
+        ))
     }
+
+    async fn execute_command(
+        &self,
+        params: ExecuteCommandParams,
+    ) -> Result<Option<serde_json::Value>> {
+        if params.command == NOOP_COMMAND {
+            return Ok(None);
+        }
+        if params.command != RUN_ENTRY_COMMAND
+            && params.command != RUN_ENTRY_WITH_VARS_COMMAND
+            && params.command != COPY_AS_CURL_COMMAND
+        {
+            return Ok(None);
+        }
+        let arguments = params.arguments;
+        if arguments.is_empty() {
+            return Ok(None);
+        }
+        let Some(uri_value) = arguments.first() else {
+            return Ok(None);
+        };
+        let Some(uri_str) = uri_value.as_str() else {
+            return Ok(None);
+        };
+        let Ok(uri) = Url::parse(uri_str) else {
+            return Ok(None);
+        };
+        let line = arguments
+            .get(1)
+            .and_then(|value| value.as_u64())
+            .map(|value| value as usize)
+            .unwrap_or(0);
+        if params.command == COPY_AS_CURL_COMMAND {
+            let Some(text) = self.document_text(&uri) else {
+                return Ok(None);
+            };
+            let Some(curl) = build_curl_for_entry(&text, line) else {
+                self.client
+                    .show_message(MessageType::WARNING, "Unable to build curl for this entry.")
+                    .await;
+                return Ok(None);
+            };
+            self.client
+                .show_message(
+                    MessageType::INFO,
+                    format!("Copy as curl (manual copy):\n{curl}"),
+                )
+                .await;
+            return Ok(Some(serde_json::Value::String(curl)));
+        }
+
+        let Some(text) = self.document_text(&uri) else {
+            return Ok(None);
+        };
+        let Some(entry_text) = extract_entry_text(&text, line) else {
+            self.client
+                .show_message(
+                    MessageType::WARNING,
+                    "Unable to resolve request entry for run command.",
+                )
+                .await;
+            return Ok(None);
+        };
+        let temp_file = uri.to_file_path().ok().and_then(|path| {
+            path.parent()
+                .map(|parent| tempfile::Builder::new().suffix(".hurl").tempfile_in(parent))
+        });
+        let mut temp = match temp_file.unwrap_or_else(NamedTempFile::new) {
+            Ok(file) => file,
+            Err(error) => {
+                self.client
+                    .show_message(
+                        MessageType::ERROR,
+                        format!("Failed to create temp file: {error}"),
+                    )
+                    .await;
+                return Ok(None);
+            }
+        };
+        if let Err(error) = temp.write_all(entry_text.as_bytes()) {
+            self.client
+                .show_message(
+                    MessageType::ERROR,
+                    format!("Failed to write temp file: {error}"),
+                )
+                .await;
+            return Ok(None);
+        }
+        let path = temp.path().to_path_buf();
+
+        let mut cmd = TokioCommand::new("hurl");
+        cmd.arg(&path);
+        if params.command == RUN_ENTRY_WITH_VARS_COMMAND {
+            let roots = self.workspace_roots().await;
+            if let Some(vars_file) = pick_variable_file_with_roots(&uri, &roots) {
+                cmd.arg("--variables-file").arg(vars_file);
+            } else {
+                self.client
+                    .show_message(
+                        MessageType::WARNING,
+                        "No variable file found (.hurl-vars, vars.env, hurl.env, .env). Running without vars file.",
+                    )
+                    .await;
+            }
+        }
+
+        let output = cmd.output().await;
+        match output {
+            Ok(output) if output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let message = if stdout.trim().is_empty() {
+                    "hurl run succeeded for selected entry.".to_string()
+                } else {
+                    format!("hurl run succeeded:\n{}", truncate_message(stdout.as_ref()))
+                };
+                self.client.show_message(MessageType::INFO, message).await;
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let detail = if stderr.trim().is_empty() {
+                    format!("exit status: {}", output.status)
+                } else {
+                    truncate_message(stderr.as_ref())
+                };
+                self.client
+                    .show_message(MessageType::ERROR, format!("hurl run failed: {detail}"))
+                    .await;
+            }
+            Err(error) => {
+                self.client
+                    .show_message(
+                        MessageType::ERROR,
+                        format!("Failed to execute hurl: {error}"),
+                    )
+                    .await;
+            }
+        }
+        Ok(None)
+    }
+}
+
+fn truncate_message(input: &str) -> String {
+    const MAX_CHARS: usize = 600;
+    if input.chars().count() <= MAX_CHARS {
+        input.to_string()
+    } else {
+        let prefix: String = input.chars().take(MAX_CHARS).collect();
+        format!("{prefix}...")
+    }
+}
+
+fn extract_workspace_roots(params: &InitializeParams) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(folders) = &params.workspace_folders {
+        for folder in folders {
+            if let Ok(path) = folder.uri.to_file_path() {
+                roots.push(path);
+            }
+        }
+    }
+    if roots.is_empty() {
+        if let Some(uri) = &params.root_uri {
+            if let Ok(path) = uri.to_file_path() {
+                roots.push(path);
+            }
+        }
+    }
+    roots
 }
 
 fn position_for_end(text: &str) -> Position {

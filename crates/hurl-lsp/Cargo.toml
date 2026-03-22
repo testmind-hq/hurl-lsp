@@ -8,11 +8,13 @@ license.workspace = true
 dashmap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml = "0.9"
 tokio.workspace = true
 tower-lsp.workspace = true
 url.workspace = true
 hurl_core = "7.1.0"
 hurlfmt = "7.1.0"
+tempfile = "3"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
