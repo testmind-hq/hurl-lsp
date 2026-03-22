@@ -1,6 +1,6 @@
 use crate::syntax::{
-    is_http_method, is_identifier, is_known_section, section_label, section_name_from_line,
-    variable_placeholders, visible_variables_before_line,
+    canonical_section_name, is_http_method, is_identifier, is_known_section, section_label,
+    section_name_from_line, variable_placeholders, visible_variables_before_line,
 };
 use hurl_core::error::DisplaySourceError;
 use std::collections::BTreeSet;
@@ -68,6 +68,7 @@ pub fn collect_diagnostics(text: &str) -> Vec<Diagnostic> {
 
         if let Some(section_name) = section_name_from_line(trimmed) {
             let section = section_label(section_name);
+            let section_key = canonical_section_name(section_name);
             if !is_known_section(section_name) {
                 diagnostics.push(Diagnostic {
                     range: Range::new(
@@ -80,7 +81,7 @@ pub fn collect_diagnostics(text: &str) -> Vec<Diagnostic> {
                     ..Default::default()
                 });
             }
-            if !seen_sections_in_request.insert(section.clone()) {
+            if !seen_sections_in_request.insert(section_key.to_string()) {
                 diagnostics.push(Diagnostic {
                     range: Range::new(
                         Position::new(line_idx as u32, 0),
@@ -280,5 +281,14 @@ mod tests {
         assert!(!diagnostics
             .iter()
             .any(|diagnostic| diagnostic.message.contains("Undefined variable")));
+    }
+
+    #[test]
+    fn warns_for_duplicate_section_aliases() {
+        let diagnostics =
+            collect_diagnostics("GET /users\nHTTP 200\n[Query]\na: 1\n[QueryStringParams]\nb: 2\n");
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("Duplicate section")));
     }
 }

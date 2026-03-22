@@ -56,6 +56,15 @@ pub fn section_label(name: &str) -> String {
     format!("[{name}]")
 }
 
+pub fn canonical_section_name(name: &str) -> &str {
+    match name {
+        "QueryStringParams" | "QueryStringParameters" => "Query",
+        "FormParams" => "Form",
+        "MultipartFormData" => "Multipart",
+        _ => name,
+    }
+}
+
 pub fn is_identifier(name: &str) -> bool {
     !name.is_empty()
         && name

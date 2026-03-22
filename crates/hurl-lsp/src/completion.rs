@@ -85,7 +85,7 @@ fn in_asserts_block(text: &str, line_idx: usize) -> bool {
 
     for (idx, line) in text.lines().enumerate() {
         let trimmed = line.trim();
-        if method_from_line(trimmed).is_some() {
+        if method_from_line(trimmed).is_some() || looks_like_request_start(trimmed) {
             current_section = None;
         } else if let Some(name) = section_name_from_line(trimmed) {
             current_section = Some(name);
@@ -96,6 +96,17 @@ fn in_asserts_block(text: &str, line_idx: usize) -> bool {
     }
 
     current_section == Some("Asserts")
+}
+
+fn looks_like_request_start(line: &str) -> bool {
+    if line.is_empty() || line.starts_with('#') || line.starts_with('[') || line.starts_with('{') {
+        return false;
+    }
+    let token = line.split_whitespace().next().unwrap_or_default();
+    if token.is_empty() || !token.chars().all(|ch| ch.is_ascii_uppercase()) {
+        return false;
+    }
+    METHODS.iter().any(|method| method.starts_with(token))
 }
 
 fn variable_prefix(prefix: &str) -> Option<&str> {
@@ -156,5 +167,13 @@ mod tests {
         let text = "GET /users/{{u}}\nHTTP 200\n\nGET /a\nHTTP 200\n[Captures]\nuser_id: jsonpath \"$.id\"\n";
         let items = completions(text, Position::new(0, 14));
         assert!(!items.iter().any(|item| item.label == "user_id"));
+    }
+
+    #[test]
+    fn exits_assert_context_on_partial_method_line() {
+        let text = "GET /a\nHTTP 200\n[Asserts]\njsonpath \"$.id\" == 1\n\nGE";
+        let items = completions(text, Position::new(5, 2));
+        assert!(!items.iter().any(|item| item.label == "jsonpath"));
+        assert!(items.iter().any(|item| item.label == "GET"));
     }
 }
