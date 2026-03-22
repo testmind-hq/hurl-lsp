@@ -6,7 +6,7 @@ use crate::{
     completion::completions_with_external,
     definition::definition_with_external,
     diagnostics::collect_diagnostics_with_external,
-    execution::execution_diagnostics_for_result,
+    execution::execution_diagnostics_for_entry_failure,
     formatting::format_document,
     hover::hover_with_external,
     openapi::{load_openapi_paths_with_roots, load_openapi_request_body_fields_with_roots},
@@ -377,7 +377,7 @@ impl LanguageServer for Backend {
                 };
                 self.execution_diagnostics.insert(
                     uri.clone(),
-                    execution_diagnostics_for_result(line as u32, false, &detail),
+                    execution_diagnostics_for_entry_failure(&text, line as u32, &detail),
                 );
                 self.client
                     .show_message(MessageType::ERROR, format!("hurl run failed: {detail}"))
@@ -387,7 +387,7 @@ impl LanguageServer for Backend {
             Err(error) => {
                 self.execution_diagnostics.insert(
                     uri.clone(),
-                    execution_diagnostics_for_result(line as u32, false, &error.to_string()),
+                    execution_diagnostics_for_entry_failure(&text, line as u32, &error.to_string()),
                 );
                 self.client
                     .show_message(

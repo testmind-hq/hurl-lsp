@@ -1,3 +1,4 @@
+use crate::syntax::{method_from_line, section_name_from_line};
 use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 
 pub fn execution_diagnostics_for_result(line: u32, success: bool, detail: &str) -> Vec<Diagnostic> {
@@ -13,6 +14,52 @@ pub fn execution_diagnostics_for_result(line: u32, success: bool, detail: &str) 
     }]
 }
 
+pub fn execution_diagnostics_for_entry_failure(
+    source: &str,
+    entry_line: u32,
+    detail: &str,
+) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+    let mut in_entry = false;
+    let mut in_asserts = false;
+
+    for (idx, raw_line) in source.lines().enumerate() {
+        let line_no = idx as u32;
+        if line_no == entry_line {
+            in_entry = true;
+            continue;
+        }
+        if !in_entry {
+            continue;
+        }
+
+        let trimmed = raw_line.trim();
+        if method_from_line(trimmed).is_some() {
+            break;
+        }
+        if let Some(section) = section_name_from_line(trimmed) {
+            in_asserts = section == "Asserts";
+            continue;
+        }
+        if !in_asserts || trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        diagnostics.push(Diagnostic {
+            range: Range::new(Position::new(line_no, 0), Position::new(line_no, 1)),
+            severity: Some(DiagnosticSeverity::ERROR),
+            source: Some("hurl-lsp-run".to_string()),
+            message: format!("Run failed: {detail}"),
+            ..Default::default()
+        });
+    }
+
+    if diagnostics.is_empty() {
+        return execution_diagnostics_for_result(entry_line, false, detail);
+    }
+    diagnostics
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -26,5 +73,15 @@ mod tests {
         assert_eq!(diag.range.start.line, 12);
         assert_eq!(diag.severity, Some(DiagnosticSeverity::ERROR));
         assert!(diag.message.contains("assert failed"));
+    }
+
+    #[test]
+    fn maps_failed_run_to_assert_lines_when_present() {
+        let source = "POST /users\nHTTP 201\n[Asserts]\nstatus == 201\njsonpath \"$.id\" exists\n";
+        let diagnostics =
+            execution_diagnostics_for_entry_failure(source, 0, "assert failed: status == 201");
+        assert_eq!(diagnostics.len(), 2);
+        assert_eq!(diagnostics[0].range.start.line, 3);
+        assert_eq!(diagnostics[1].range.start.line, 4);
     }
 }

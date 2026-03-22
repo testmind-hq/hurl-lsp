@@ -224,7 +224,7 @@ CI result feedback integration from TestMind is a future phase and is not implem
 
 - [x] Variable file integration (workspace env files + cross-file resolution)
 - [~] Code Lens — run/run-with-vars/copy-as-curl implemented; clipboard integration and inline result rendering pending
-- [~] Inline execution result display (run-failure diagnostics at entry line implemented; assert-level inline rendering pending)
+- [~] Inline execution result display (run failures now map to assert-line diagnostics; rich per-assert actual-value rendering pending)
 - [~] OpenAPI / Swagger integration (path + request-body-field completion implemented, schema/assert generation pending)
 - [x] Document outline with metadata support (`documentSymbol`)
 - [ ] Chain case detection and dependency annotation
