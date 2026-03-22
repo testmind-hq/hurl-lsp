@@ -31,6 +31,8 @@ use tower_lsp::{jsonrpc::Result, lsp_types::*, Client, LanguageServer};
 use tracing::{error, info, warn};
 use url::Url;
 
+const REQUEST_LOG_PREFIX: &str = "[hurl-request] ";
+
 #[derive(Default)]
 pub struct DocumentStore {
     docs: DashMap<Url, String>,
@@ -94,6 +96,14 @@ impl Backend {
         let text = message.into();
         info!("{text}");
         self.client.log_message(MessageType::INFO, text).await;
+    }
+
+    async fn log_request(&self, message: impl Into<String>) {
+        let text = message.into();
+        info!("{text}");
+        self.client
+            .log_message(MessageType::INFO, format!("{REQUEST_LOG_PREFIX}{text}"))
+            .await;
     }
 }
 
@@ -412,6 +422,10 @@ impl LanguageServer for Backend {
             .and_then(|value| value.as_u64())
             .map(|value| value as usize)
             .unwrap_or(0);
+        let verbosity = arguments
+            .get(2)
+            .and_then(|value| value.as_str())
+            .unwrap_or("verbose");
         if params.command == COPY_AS_CURL_COMMAND {
             let Some(text) = self.document_text(&uri) else {
                 return Ok(None);
@@ -500,6 +514,11 @@ impl LanguageServer for Backend {
         let path = temp.path().to_path_buf();
 
         let mut cmd = TokioCommand::new("hurl");
+        if verbosity == "very-verbose" {
+            cmd.arg("--very-verbose");
+        } else {
+            cmd.arg("--verbose");
+        }
         cmd.arg(&path);
         if params.command == RUN_ENTRY_WITH_VARS_COMMAND {
             let roots = self.workspace_roots().await;
@@ -513,8 +532,20 @@ impl LanguageServer for Backend {
                         "No variable file found (.hurl-vars, vars.env, hurl.env, .env). Running without vars file.",
                     )
                     .await;
+                self.log_request("no variable file found; running without --variables-file")
+                    .await;
             }
         }
+        let command_preview = if params.command == RUN_ENTRY_WITH_VARS_COMMAND {
+            format!("hurl --{verbosity} <tempfile> [--variables-file <detected>]")
+        } else {
+            format!("hurl --{verbosity} <tempfile>")
+        };
+        self.log_request(format!(
+            "run target={run_target} uri={} line={} command={}",
+            uri, line, command_preview
+        ))
+        .await;
         self.log_execution(format!(
             "hurl run started ({run_target}) for {} at line {}",
             uri, line
@@ -538,6 +569,14 @@ impl LanguageServer for Backend {
                 } else {
                     format!("hurl run succeeded:\n{}", truncate_message(stdout.as_ref()))
                 };
+                if !stdout.trim().is_empty() {
+                    self.log_request(format!("stdout:\n{}", truncate_message(stdout.as_ref())))
+                        .await;
+                }
+                if !stderr.trim().is_empty() {
+                    self.log_request(format!("stderr:\n{}", truncate_message(stderr.as_ref())))
+                        .await;
+                }
                 self.log_execution(format!("hurl run succeeded ({run_target}) for {}", uri))
                     .await;
                 self.client.show_message(MessageType::INFO, message).await;
@@ -561,6 +600,14 @@ impl LanguageServer for Backend {
                     line as u32,
                     parse_run_summary(stderr.as_ref(), stdout.as_ref(), false),
                 );
+                if !stdout.trim().is_empty() {
+                    self.log_request(format!("stdout:\n{}", truncate_message(stdout.as_ref())))
+                        .await;
+                }
+                if !stderr.trim().is_empty() {
+                    self.log_request(format!("stderr:\n{}", truncate_message(stderr.as_ref())))
+                        .await;
+                }
                 error!("hurl run failed ({run_target}) for {}: {}", uri, detail);
                 self.log_execution(format!(
                     "hurl run failed ({run_target}) for {}: {}",
@@ -584,6 +631,7 @@ impl LanguageServer for Backend {
                     line as u32,
                     parse_run_summary(&err_text, "", false),
                 );
+                self.log_request(format!("spawn error:\n{err_text}")).await;
                 error!(
                     "failed to execute hurl ({run_target}) for {}: {}",
                     uri, error

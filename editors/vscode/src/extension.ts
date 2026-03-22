@@ -4,12 +4,17 @@ import { Trace } from "vscode-jsonrpc";
 import { ensureBinary } from "./download";
 
 let client: LanguageClient | undefined;
-let logChannel: vscode.OutputChannel | undefined;
+let runtimeLogChannel: vscode.OutputChannel | undefined;
+let requestLogChannel: vscode.OutputChannel | undefined;
 let logNotificationDisposable: vscode.Disposable | undefined;
+const RUN_COMMANDS = new Set(["hurl.runEntry", "hurl.runEntryWithVars", "hurl.runChain", "hurl.runFile"]);
+const REQUEST_LOG_PREFIX = "[hurl-request] ";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  logChannel = vscode.window.createOutputChannel("Hurl Log");
-  context.subscriptions.push(logChannel);
+  runtimeLogChannel = vscode.window.createOutputChannel("Hurl Runtime Log");
+  requestLogChannel = vscode.window.createOutputChannel("Hurl Request Log");
+  context.subscriptions.push(runtimeLogChannel);
+  context.subscriptions.push(requestLogChannel);
   context.subscriptions.push(
     vscode.commands.registerCommand("hurl.restartLanguageServer", async () => {
       await restart(context);
@@ -17,9 +22,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
   context.subscriptions.push(
     vscode.commands.registerCommand("hurl.showLog", () => {
-      logChannel?.show(true);
+      runtimeLogChannel?.show(true);
     }),
   );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("hurl.showRequestLog", () => {
+      requestLogChannel?.show(true);
+    }),
+  );
+  registerCommandForwarders(context);
 
   await start(context);
 }
@@ -51,17 +62,17 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
         throw new Error("Missing extension version for release binary resolution.");
       }
       command = await ensureBinary(context, binaryVersion);
-      appendLog(`Using server binary: ${command}`);
+      appendRuntimeLog(`Using server binary: ${command}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      appendLog(`Failed to resolve server binary: ${message}`);
+      appendRuntimeLog(`Failed to resolve server binary: ${message}`);
       void vscode.window.showErrorMessage(
         `Unable to start hurl-lsp automatically. Set hurl.server.path to a local binary. ${message}`,
       );
       return;
     }
   } else {
-    appendLog(`Using configured server path: ${command}`);
+    appendRuntimeLog(`Using configured server path: ${command}`);
   }
 
   const traceSetting = vscode.workspace.getConfiguration("hurl").get<string>("server.trace", "off");
@@ -79,14 +90,18 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
   }
   logNotificationDisposable = client.onNotification("window/logMessage", (params: { message?: string }) => {
     if (params?.message) {
-      appendLog(params.message);
+      if (params.message.startsWith(REQUEST_LOG_PREFIX)) {
+        appendRequestLog(params.message.slice(REQUEST_LOG_PREFIX.length));
+      } else {
+        appendRuntimeLog(params.message);
+      }
     }
   });
   context.subscriptions.push(logNotificationDisposable);
 
   await client.start();
   client.setTrace(toTrace(traceSetting));
-  appendLog(`Language client started (trace=${traceSetting}).`);
+  appendRuntimeLog(`Language client started (trace=${traceSetting}).`);
 }
 
 function toTrace(value: string): Trace {
@@ -100,10 +115,45 @@ function toTrace(value: string): Trace {
   }
 }
 
-function appendLog(message: string): void {
-  if (!logChannel) {
+function appendRuntimeLog(message: string): void {
+  if (!runtimeLogChannel) {
     return;
   }
   const ts = new Date().toISOString();
-  logChannel.appendLine(`[${ts}] ${message}`);
+  runtimeLogChannel.appendLine(`[${ts}] ${message}`);
+}
+
+function appendRequestLog(message: string): void {
+  if (!requestLogChannel) {
+    return;
+  }
+  const ts = new Date().toISOString();
+  requestLogChannel.appendLine(`[${ts}] ${message}`);
+}
+
+function registerCommandForwarders(context: vscode.ExtensionContext): void {
+  const commands = ["hurl.runEntry", "hurl.runEntryWithVars", "hurl.runChain", "hurl.runFile", "hurl.copyAsCurl"];
+  for (const command of commands) {
+    context.subscriptions.push(
+      vscode.commands.registerCommand(command, async (...args: unknown[]) => {
+        if (!client) {
+          vscode.window.showWarningMessage("Hurl language client is not ready yet.");
+          return;
+        }
+        const forwardedArgs = [...args];
+        if (RUN_COMMANDS.has(command)) {
+          const verbosity = vscode.workspace.getConfiguration("hurl").get<string>("run.verbosity", "verbose");
+          forwardedArgs[2] = verbosity;
+          appendRequestLog(`command=${command} verbosity=${verbosity}`);
+        }
+        try {
+          await client.sendRequest("workspace/executeCommand", { command, arguments: forwardedArgs });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          appendRuntimeLog(`Failed to execute command ${command}: ${message}`);
+          vscode.window.showErrorMessage(`Hurl command failed: ${message}`);
+        }
+      }),
+    );
+  }
 }

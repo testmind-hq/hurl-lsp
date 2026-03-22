@@ -20,7 +20,8 @@
   "activationEvents": [
     "onLanguage:hurl",
     "onCommand:hurl.restartLanguageServer",
-    "onCommand:hurl.showLog"
+    "onCommand:hurl.showLog",
+    "onCommand:hurl.showRequestLog"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -58,6 +59,12 @@
           "enum": ["off", "messages", "verbose"],
           "default": "off",
           "description": "Trace LSP communication for debugging."
+        },
+        "hurl.run.verbosity": {
+          "type": "string",
+          "enum": ["verbose", "very-verbose"],
+          "default": "verbose",
+          "description": "Verbosity level for running hurl requests from CodeLens."
         }
       }
     },
@@ -69,6 +76,10 @@
       {
         "command": "hurl.showLog",
         "title": "Hurl: Show Log"
+      },
+      {
+        "command": "hurl.showRequestLog",
+        "title": "Hurl: Show Request Log"
       }
     ]
   },
