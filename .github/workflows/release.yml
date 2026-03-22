@@ -44,9 +44,14 @@ jobs:
         with:
           target: ${{ matrix.target }}
       - name: Install cross
+        if: ${{ runner.os == 'Linux' }}
         run: cargo install cross --git https://github.com/cross-rs/cross
-      - name: Build
+      - name: Build (Linux via cross)
+        if: ${{ runner.os == 'Linux' }}
         run: cross build --release --package hurl-lsp --target ${{ matrix.target }}
+      - name: Build (macOS/Windows via cargo)
+        if: ${{ runner.os != 'Linux' }}
+        run: cargo build --release --package hurl-lsp --target ${{ matrix.target }}
       - name: Package
         shell: bash
         run: |
