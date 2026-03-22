@@ -231,20 +231,26 @@ fn extract_response_fields(
             };
             for (status, response_raw) in responses {
                 let response = resolve_local_ref(response_raw, value).unwrap_or(response_raw);
-                let schema = response
-                    .get("content")
-                    .and_then(|c| c.get("application/json"))
-                    .and_then(|j| j.get("schema"));
-                let Some(schema) = schema else {
+                let Some(content) = response.get("content").and_then(|item| item.as_object())
+                else {
                     continue;
                 };
-                let mut properties = BTreeSet::new();
-                collect_schema_property_names(schema, value, &mut properties, 0);
-                if properties.is_empty() {
+                let mut all_properties = BTreeSet::new();
+                for (media_type, media_schema) in content {
+                    if !is_json_media_type(media_type) {
+                        continue;
+                    }
+                    let Some(schema) = media_schema.get("schema") else {
+                        continue;
+                    };
+                    collect_schema_property_names(schema, value, &mut all_properties, 0);
+                }
+                if all_properties.is_empty() {
                     continue;
                 }
+
                 let key = format!("{method_upper} {path} {status}");
-                out.entry(key).or_default().extend(properties);
+                out.entry(key).or_default().extend(all_properties);
             }
         }
     }
@@ -259,6 +265,12 @@ fn resolve_local_ref<'a>(
     let reference = value.get("$ref").and_then(|item| item.as_str())?;
     let pointer = reference.strip_prefix('#')?;
     root.pointer(pointer)
+}
+
+fn is_json_media_type(media_type: &str) -> bool {
+    media_type == "*/*"
+        || media_type.eq_ignore_ascii_case("application/json")
+        || media_type.to_ascii_lowercase().ends_with("+json")
 }
 
 fn collect_schema_property_names(
@@ -473,6 +485,26 @@ mod tests {
         let props = fields.get(&key).expect("POST /users 201 fields");
         assert!(props.contains("id"));
         assert!(props.contains("status"));
+
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn loads_response_fields_from_problem_json_media_type() {
+        let base = tmp_dir("hurl-lsp-openapi-response-problem-json");
+        fs::create_dir_all(&base).expect("mkdir");
+        fs::write(
+            base.join("openapi.yaml"),
+            "openapi: 3.0.0\npaths:\n  /users:\n    get:\n      responses:\n        '400':\n          content:\n            application/problem+json:\n              schema:\n                type: object\n                properties:\n                  title:\n                    type: string\n                  detail:\n                    type: string\n",
+        )
+        .expect("write yaml");
+        let uri = Url::from_file_path(base.join("test.hurl")).expect("uri");
+
+        let fields = load_openapi_response_fields_with_roots(&uri, std::slice::from_ref(&base));
+        let key = "GET /users 400".to_string();
+        let props = fields.get(&key).expect("GET /users 400 fields");
+        assert!(props.contains("title"));
+        assert!(props.contains("detail"));
 
         let _ = fs::remove_dir_all(base);
     }

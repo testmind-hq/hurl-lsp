@@ -69,9 +69,10 @@ pub fn execution_diagnostics_for_entry_failure(
 }
 
 pub fn parse_run_summary(stderr: &str, stdout: &str, success: bool) -> RunSummary {
+    let failed_asserts = parse_failed_assert_count(stderr).max(parse_failed_assert_count(stdout));
     RunSummary {
         success,
-        failed_asserts: parse_failed_assert_count(stderr),
+        failed_asserts,
         duration_ms: parse_duration_ms(stderr).or_else(|| parse_duration_ms(stdout)),
     }
 }
@@ -189,5 +190,13 @@ mod tests {
         assert!(!summary.success);
         assert_eq!(summary.failed_asserts, 2);
         assert_eq!(summary.duration_ms, Some(230));
+    }
+
+    #[test]
+    fn parses_failed_assert_count_from_stdout_when_stderr_empty() {
+        let summary = parse_run_summary("", "1 assert failed · 120ms", false);
+        assert!(!summary.success);
+        assert_eq!(summary.failed_asserts, 1);
+        assert_eq!(summary.duration_ms, Some(120));
     }
 }
