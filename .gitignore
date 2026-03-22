@@ -28,3 +28,4 @@ docs/plans/
 # VSCode extension generated artifacts
 editors/vscode/node_modules/
 editors/vscode/out/
+editors/vscode/*.vsix

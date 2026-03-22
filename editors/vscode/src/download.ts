@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as https from "node:https";
+import { spawn } from "node:child_process";
 import type { ExtensionContext } from "vscode";
 
 const BINARY_VERSION = "0.1.0";
@@ -18,32 +19,48 @@ export async function ensureBinary(context: ExtensionContext): Promise<string> {
   }
 
   const target = detectTarget();
-  const archiveName = `hurl-lsp-${BINARY_VERSION}-${target}.tar.gz`;
+  const asset = releaseAssetForTarget(target);
+  const archiveName = `hurl-lsp-${BINARY_VERSION}-${target}.${asset.extension}`;
   const url = `https://github.com/${REPO}/releases/download/v${BINARY_VERSION}/${archiveName}`;
   const archivePath = path.join(storageDir, archiveName);
 
   await download(url, archivePath);
-  await extractTarGz(archivePath, storageDir);
-  await fs.promises.chmod(binaryPath, 0o755);
+  await extractArchive(archivePath, storageDir, asset.extension);
+  if (os.platform() !== "win32") {
+    await fs.promises.chmod(binaryPath, 0o755);
+  }
 
   return binaryPath;
 }
 
 function binaryName(): string {
-  return "hurl-lsp";
+  return os.platform() === "win32" ? "hurl-lsp.exe" : "hurl-lsp";
 }
 
 function detectTarget(): string {
-  if (os.platform() !== "darwin") {
-    throw new Error("Automatic download currently supports macOS only.");
-  }
-  if (os.arch() === "arm64") {
+  const platform = os.platform();
+  const arch = os.arch();
+
+  if (platform === "darwin" && arch === "arm64") {
     return "aarch64-apple-darwin";
   }
-  if (os.arch() === "x64") {
+  if (platform === "darwin" && arch === "x64") {
     return "x86_64-apple-darwin";
   }
-  throw new Error(`Unsupported macOS architecture: ${os.arch()}`);
+  if (platform === "linux" && arch === "x64") {
+    return "x86_64-unknown-linux-gnu";
+  }
+  if (platform === "win32" && arch === "x64") {
+    return "x86_64-pc-windows-msvc";
+  }
+  throw new Error(`Unsupported platform/arch combination: ${platform}/${arch}`);
+}
+
+function releaseAssetForTarget(target: string): { extension: "tar.gz" | "zip" } {
+  if (target.endsWith("windows-msvc")) {
+    return { extension: "zip" };
+  }
+  return { extension: "tar.gz" };
 }
 
 function download(url: string, destination: string): Promise<void> {
@@ -70,11 +87,36 @@ function download(url: string, destination: string): Promise<void> {
   });
 }
 
-async function extractTarGz(archivePath: string, outputDir: string): Promise<void> {
-  const { spawn } = await import("node:child_process");
+async function extractArchive(
+  archivePath: string,
+  outputDir: string,
+  extension: "tar.gz" | "zip",
+): Promise<void> {
+  if (extension === "zip") {
+    await extractZip(archivePath, outputDir);
+    return;
+  }
+  await extractTarGz(archivePath, outputDir);
+}
 
+async function extractTarGz(archivePath: string, outputDir: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = spawn("tar", ["-xzf", archivePath, "-C", outputDir]);
+    child.on("exit", (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`Failed to extract ${path.basename(archivePath)} (exit code ${code ?? "unknown"}).`));
+      }
+    });
+    child.on("error", reject);
+  });
+}
+
+async function extractZip(archivePath: string, outputDir: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const command = `Expand-Archive -Path '${archivePath.replace(/'/g, "''")}' -DestinationPath '${outputDir.replace(/'/g, "''")}' -Force`;
+    const child = spawn("powershell", ["-NoProfile", "-Command", command]);
     child.on("exit", (code) => {
       if (code === 0) {
         resolve();

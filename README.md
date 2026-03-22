@@ -32,13 +32,13 @@ Current implementation status:
 
 - Rust language server with diagnostics, completions, hover, formatting, outline, and variable definition jump
 - VSCode extension with `.hurl` language registration, TextMate grammar, snippets, and language client
-- macOS binary download flow inside the VSCode extension
+- VSCode binary bootstrap for macOS / Linux / Windows
+- Zed extension skeleton and Helix setup docs in-repo
 
 Not implemented yet:
 
 - Rich per-assert actual-value inline rendering
 - VSCode webview panels
-- Zed / Helix extensions
 - TestMind integration
 
 ---
@@ -112,10 +112,10 @@ The server exposes metadata-first document symbols with request-level fallback:
 
 | Editor | Status | Notes |
 |--------|--------|-------|
-| **VSCode** | Implemented | Extension included in `editors/vscode`, with local binary config and macOS auto-download flow |
-| **Helix** | Manual setup | Server is usable manually once binary is installed |
+| **VSCode** | Implemented | Extension included in `editors/vscode`, with local binary config and cross-platform auto-download flow |
+| **Helix** | Implemented (manual setup) | Guide available at `editors/helix/README.md` |
 | **Neovim** | Manual setup | Server is usable manually via LSP config |
-| **Zed** | Planned | No extension implementation yet |
+| **Zed** | Baseline implemented | Minimal extension skeleton in `editors/zed` (publish pending) |
 
 ## Platform Support
 
@@ -123,8 +123,8 @@ Current automatic binary management in the VSCode extension supports:
 
 - `aarch64-apple-darwin`
 - `x86_64-apple-darwin`
-
-Linux and Windows release artifacts are planned, but not part of the current v0 baseline.
+- `x86_64-unknown-linux-gnu`
+- `x86_64-pc-windows-msvc`
 
 ---
 
@@ -212,12 +212,12 @@ CI result feedback integration from TestMind is a future phase and is not implem
 
 ### Phase 2 — Editor Extensions + Distribution
 
-- [ ] Multi-platform cross-compilation + GitHub Releases
-- [ ] VSCode extension (syntax highlight + snippets + LSP client + auto binary management)
+- [x] Multi-platform cross-compilation workflow baseline + GitHub Releases automation
+- [x] VSCode extension (syntax highlight + snippets + LSP client + auto binary management)
 - [ ] Publish to VS Marketplace
-- [ ] Zed extension (syntax highlight + LSP client)
+- [x] Zed extension (syntax highlight + LSP client) baseline skeleton
 - [ ] Publish to Zed Extensions
-- [ ] Helix configuration docs + upstream PR to `languages.toml`
+- [~] Helix configuration docs + upstream PR to `languages.toml` (docs done, upstream PR pending)
 - [ ] Publish to crates.io
 
 ### Phase 3 — Differentiating Features
@@ -271,7 +271,9 @@ hurl-lsp/
 │           ├── metadata.rs
 │           └── definition.rs
 ├── editors/
-│   └── vscode/                # VSCode extension (TypeScript)
+│   ├── vscode/                # VSCode extension (TypeScript)
+│   ├── zed/                   # Zed extension skeleton (Rust)
+│   └── helix/                 # Helix setup docs
 └── .github/
     └── workflows/
         ├── ci.yml
