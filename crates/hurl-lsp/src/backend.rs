@@ -303,10 +303,10 @@ impl LanguageServer for Backend {
                 .await;
             return Ok(None);
         };
-        let temp_file = uri
-            .to_file_path()
-            .ok()
-            .and_then(|path| path.parent().map(|parent| tempfile::Builder::new().suffix(".hurl").tempfile_in(parent)));
+        let temp_file = uri.to_file_path().ok().and_then(|path| {
+            path.parent()
+                .map(|parent| tempfile::Builder::new().suffix(".hurl").tempfile_in(parent))
+        });
         let mut temp = match temp_file.unwrap_or_else(NamedTempFile::new) {
             Ok(file) => file,
             Err(error) => {
