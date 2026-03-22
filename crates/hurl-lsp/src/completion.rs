@@ -22,13 +22,14 @@ const CONTENT_TYPES: &[&str] = &[
 
 #[cfg(test)]
 pub fn completions(text: &str, position: Position) -> Vec<CompletionItem> {
-    completions_with_external(text, position, &BTreeSet::new())
+    completions_with_external(text, position, &BTreeSet::new(), &BTreeSet::new())
 }
 
 pub fn completions_with_external(
     text: &str,
     position: Position,
     external_variables: &BTreeSet<String>,
+    openapi_paths: &BTreeSet<String>,
 ) -> Vec<CompletionItem> {
     let line_idx = position.line as usize;
     let line = text.lines().nth(position.line as usize).unwrap_or_default();
@@ -74,6 +75,20 @@ pub fn completions_with_external(
         return CONTENT_TYPES
             .iter()
             .map(|item| keyword_item(item))
+            .collect();
+    }
+
+    if let Some(path_prefix) = request_path_prefix(prefix) {
+        return openapi_paths
+            .iter()
+            .filter(|path| path.starts_with(path_prefix))
+            .map(|path| CompletionItem {
+                label: path.clone(),
+                kind: Some(CompletionItemKind::REFERENCE),
+                insert_text: Some(path.clone()),
+                detail: Some("OpenAPI path".into()),
+                ..Default::default()
+            })
             .collect();
     }
 
@@ -130,6 +145,17 @@ fn variable_prefix(prefix: &str) -> Option<&str> {
     Some(content)
 }
 
+fn request_path_prefix(prefix: &str) -> Option<&str> {
+    let trimmed = prefix.trim_start();
+    let mut parts = trimmed.split_whitespace();
+    let method = parts.next()?;
+    if !crate::syntax::is_http_method(method) {
+        return None;
+    }
+    let path = parts.next().unwrap_or_default();
+    Some(path)
+}
+
 fn known_variables(
     text: &str,
     line_idx: usize,
@@ -170,8 +196,19 @@ mod tests {
         let text = "GET /users/{{ho";
         let mut vars = BTreeSet::new();
         vars.insert("host".to_string());
-        let items = completions_with_external(text, Position::new(0, 15), &vars);
+        let items = completions_with_external(text, Position::new(0, 15), &vars, &BTreeSet::new());
         assert!(items.iter().any(|item| item.label == "host"));
+    }
+
+    #[test]
+    fn returns_openapi_path_completion() {
+        let text = "GET /us";
+        let mut paths = BTreeSet::new();
+        paths.insert("/users".to_string());
+        paths.insert("/orders".to_string());
+        let items = completions_with_external(text, Position::new(0, 7), &BTreeSet::new(), &paths);
+        assert!(items.iter().any(|item| item.label == "/users"));
+        assert!(!items.iter().any(|item| item.label == "/orders"));
     }
 
     #[test]

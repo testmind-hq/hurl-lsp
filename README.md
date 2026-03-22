@@ -81,6 +81,12 @@ Per-request Code Lens is available with:
 - summary line (`method/path`, section counters)
 - `▶ Run` action (executes `hurl` for the current file path)
 - `⚡ Run with vars` action (uses nearest `.hurl-vars` / `vars.env` / `hurl.env` / `.env` when found)
+- `📋 Copy as curl` action (returns generated curl text from request line + headers)
+
+### OpenAPI Path Completion
+
+When `openapi.yaml` / `openapi.yml` / `swagger.yaml` / `swagger.yml` / `swagger.json` is present in the workspace hierarchy,
+request lines can use OpenAPI `paths` keys for URL completion.
 
 ### Built-in Formatter
 
@@ -217,6 +223,7 @@ CI result feedback integration from TestMind is a future phase and is not implem
 - [x] Variable file integration (workspace env files + cross-file resolution)
 - [~] Code Lens — run and run-with-vars implemented, copy-as-curl pending
 - [ ] Inline execution result display
+- [~] OpenAPI / Swagger integration (path completion implemented, schema/body/assert generation pending)
 - [x] Document outline with metadata support (`documentSymbol`)
 - [ ] Chain case detection and dependency annotation
 - [ ] OpenAPI / Swagger integration (URL + body completion, auto-generate asserts)

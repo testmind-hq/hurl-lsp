@@ -6,6 +6,7 @@ mod diagnostics;
 mod formatting;
 mod hover;
 mod metadata;
+mod openapi;
 mod symbols;
 mod syntax;
 mod variables;

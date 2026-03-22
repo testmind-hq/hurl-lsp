@@ -8,6 +8,7 @@ use crate::{
     diagnostics::collect_diagnostics_with_external,
     formatting::format_document,
     hover::hover_with_external,
+    openapi::load_openapi_paths,
     symbols::document_symbols,
     variables::{load_workspace_variables, pick_variable_file},
 };
@@ -141,11 +142,13 @@ impl LanguageServer for Backend {
         };
         let external = load_workspace_variables(&uri);
         let external_names: BTreeSet<String> = external.into_iter().map(|item| item.name).collect();
+        let openapi_paths = load_openapi_paths(&uri);
 
         Ok(Some(CompletionResponse::Array(completions_with_external(
             &text,
             params.text_document_position.position,
             &external_names,
+            &openapi_paths,
         ))))
     }
 
