@@ -1,9 +1,6 @@
 use crate::{
-    completion::completions,
-    diagnostics::{collect_diagnostics, parse_document, ParsedDocument},
-    formatting::format_document,
-    hover::hover,
-    symbols::document_symbols,
+    completion::completions, definition::definition, diagnostics::collect_diagnostics,
+    formatting::format_document, hover::hover, symbols::document_symbols,
 };
 use dashmap::DashMap;
 use std::sync::Arc;
@@ -52,10 +49,6 @@ impl Backend {
             .publish_diagnostics(uri, diagnostics, None)
             .await;
     }
-
-    fn parsed_document(&self, uri: &Url) -> Option<ParsedDocument> {
-        self.document_text(uri).map(|text| parse_document(&text))
-    }
 }
 
 #[tower_lsp::async_trait]
@@ -74,6 +67,7 @@ impl LanguageServer for Backend {
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 document_formatting_provider: Some(OneOf::Left(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
+                definition_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -160,13 +154,26 @@ impl LanguageServer for Backend {
         &self,
         params: DocumentSymbolParams,
     ) -> Result<Option<DocumentSymbolResponse>> {
-        let Some(parsed) = self.parsed_document(&params.text_document.uri) else {
+        let Some(text) = self.document_text(&params.text_document.uri) else {
             return Ok(None);
         };
 
         Ok(Some(DocumentSymbolResponse::Nested(document_symbols(
-            &parsed,
+            &text,
         ))))
+    }
+
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        let text_document_position = params.text_document_position_params;
+        let uri = text_document_position.text_document.uri.clone();
+        let Some(text) = self.document_text(&uri) else {
+            return Ok(None);
+        };
+
+        Ok(definition(&uri, &text, &text_document_position))
     }
 }
 

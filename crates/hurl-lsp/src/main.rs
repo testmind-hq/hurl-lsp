@@ -1,8 +1,10 @@
 mod backend;
 mod completion;
+mod definition;
 mod diagnostics;
 mod formatting;
 mod hover;
+mod metadata;
 mod symbols;
 
 use backend::Backend;
