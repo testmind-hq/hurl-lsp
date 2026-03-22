@@ -36,8 +36,6 @@ Current implementation status:
 
 Not implemented yet:
 
-- Variable file integration
-- Code Lens actions and request execution
 - Inline execution results
 - VSCode webview panels
 - Zed / Helix extensions
@@ -75,6 +73,13 @@ Hover over methods, sections, and assert functions to see short inline docs.
 ### Go To Definition
 
 Variable references can jump to their same-file `[Captures]` definition.
+When workspace variable files exist (`.hurl-vars`, `vars.env`, `hurl.env`, `.env`), definition and diagnostics can also resolve against those files.
+
+### Code Lens
+
+Per-request Code Lens is available with:
+- summary line (`method/path`, section counters)
+- `▶ Run` action (executes `hurl` for the current file path)
 
 ### Built-in Formatter
 
@@ -208,8 +213,8 @@ CI result feedback integration from TestMind is a future phase and is not implem
 
 ### Phase 3 — Differentiating Features
 
-- [ ] Variable file integration (workspace env files + cross-file resolution)
-- [ ] Code Lens — run, run with vars, copy as curl
+- [x] Variable file integration (workspace env files + cross-file resolution)
+- [~] Code Lens — run implemented, run-with-vars/copy-as-curl pending
 - [ ] Inline execution result display
 - [x] Document outline with metadata support (`documentSymbol`)
 - [ ] Chain case detection and dependency annotation

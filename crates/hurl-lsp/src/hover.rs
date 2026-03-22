@@ -1,3 +1,5 @@
+use crate::syntax::variable_placeholders;
+use std::collections::BTreeMap;
 use tower_lsp::lsp_types::{Hover, HoverContents, MarkedString, Position};
 
 const SECTION_DOCS: &[(&str, &str)] = &[
@@ -35,8 +37,32 @@ const METHOD_DOCS: &[(&str, &str)] = &[
     ("DELETE", "Delete a resource."),
 ];
 
+#[cfg(test)]
 pub fn hover(text: &str, position: Position) -> Option<Hover> {
+    hover_with_external(text, position, &BTreeMap::new())
+}
+
+pub fn hover_with_external(
+    text: &str,
+    position: Position,
+    external_variables: &BTreeMap<String, String>,
+) -> Option<Hover> {
     let line = text.lines().nth(position.line as usize)?;
+    let ch = position.character as usize;
+    for (start, end, variable) in variable_placeholders(line) {
+        if ch >= start && ch <= end {
+            if let Some(value) = external_variables.get(variable) {
+                return Some(Hover {
+                    contents: HoverContents::Scalar(MarkedString::String(format!(
+                        "**{}**\n\n`{}`",
+                        variable, value
+                    ))),
+                    range: None,
+                });
+            }
+        }
+    }
+
     let token = token_at(line, position.character as usize)?;
     let docs = SECTION_DOCS
         .iter()
@@ -82,6 +108,14 @@ mod tests {
     #[test]
     fn returns_hover_for_method() {
         let value = hover("GET https://example.com", Position::new(0, 1));
+        assert!(value.is_some());
+    }
+
+    #[test]
+    fn returns_hover_for_external_variable_value() {
+        let mut vars = BTreeMap::new();
+        vars.insert("host".to_string(), "example.com".to_string());
+        let value = hover_with_external("GET https://{{host}}/users", Position::new(0, 16), &vars);
         assert!(value.is_some());
     }
 }

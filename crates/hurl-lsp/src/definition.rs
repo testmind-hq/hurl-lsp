@@ -1,22 +1,46 @@
 use crate::syntax::{capture_definitions_before_line, variable_placeholders};
+use crate::variables::VariableDef;
 use tower_lsp::lsp_types::{
     GotoDefinitionResponse, Location, Position, Range, TextDocumentPositionParams, Url,
 };
 
+#[cfg(test)]
 pub fn definition(
     uri: &Url,
     text: &str,
     params: &TextDocumentPositionParams,
 ) -> Option<GotoDefinitionResponse> {
+    definition_with_external(uri, text, params, &[])
+}
+
+pub fn definition_with_external(
+    uri: &Url,
+    text: &str,
+    params: &TextDocumentPositionParams,
+    external_variables: &[VariableDef],
+) -> Option<GotoDefinitionResponse> {
     let variable = variable_at_position(text, params.position)?;
-    let (line, start, end) =
-        capture_definition_span(text, variable, params.position.line as usize)?;
+    if let Some((line, start, end)) =
+        capture_definition_span(text, variable, params.position.line as usize)
+    {
+        return Some(GotoDefinitionResponse::Scalar(Location {
+            uri: uri.clone(),
+            range: Range::new(
+                Position::new(line as u32, start as u32),
+                Position::new(line as u32, end as u32),
+            ),
+        }));
+    }
+    let external = external_variables
+        .iter()
+        .rev()
+        .find(|item| item.name == variable)?;
 
     Some(GotoDefinitionResponse::Scalar(Location {
-        uri: uri.clone(),
+        uri: external.uri.clone(),
         range: Range::new(
-            Position::new(line as u32, start as u32),
-            Position::new(line as u32, end as u32),
+            Position::new(external.line, external.start),
+            Position::new(external.line, external.end),
         ),
     }))
 }
@@ -81,6 +105,34 @@ mod tests {
         match result {
             GotoDefinitionResponse::Scalar(location) => {
                 assert_eq!(location.range.start.line, 8);
+            }
+            _ => panic!("unexpected definition response"),
+        }
+    }
+
+    #[test]
+    fn resolves_external_variable_definition_when_no_capture() {
+        let text = "GET /users/{{host}}\nHTTP 200\n";
+        let uri = Url::parse("file:///tmp/test.hurl").expect("valid uri");
+        let params = TextDocumentPositionParams {
+            text_document: tower_lsp::lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            position: Position::new(0, 15),
+        };
+        let external = vec![VariableDef {
+            name: "host".into(),
+            value: "example.com".into(),
+            uri: Url::parse("file:///tmp/.env").expect("env uri"),
+            line: 0,
+            start: 0,
+            end: 4,
+        }];
+
+        let result =
+            definition_with_external(&uri, text, &params, &external).expect("definition resolves");
+        match result {
+            GotoDefinitionResponse::Scalar(location) => {
+                assert_eq!(location.uri.as_str(), "file:///tmp/.env");
+                assert_eq!(location.range.start.line, 0);
             }
             _ => panic!("unexpected definition response"),
         }

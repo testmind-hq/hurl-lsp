@@ -43,7 +43,15 @@ pub fn parse_document(text: &str) -> ParsedDocument {
     ParsedDocument { entries }
 }
 
+#[cfg(test)]
 pub fn collect_diagnostics(text: &str) -> Vec<Diagnostic> {
+    collect_diagnostics_with_external(text, &BTreeSet::new())
+}
+
+pub fn collect_diagnostics_with_external(
+    text: &str,
+    external_variables: &BTreeSet<String>,
+) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     let mut seen_sections_in_request = BTreeSet::new();
     if let Err(error) = hurl_core::parser::parse_hurl_file(text) {
@@ -64,7 +72,8 @@ pub fn collect_diagnostics(text: &str) -> Vec<Diagnostic> {
     for (line_idx, raw_line) in text.lines().enumerate() {
         let trimmed = raw_line.trim();
 
-        let known_variables = visible_variables_before_line(text, line_idx);
+        let mut known_variables = visible_variables_before_line(text, line_idx);
+        known_variables.extend(external_variables.iter().cloned());
 
         if let Some(section_name) = section_name_from_line(trimmed) {
             let section = section_label(section_name);

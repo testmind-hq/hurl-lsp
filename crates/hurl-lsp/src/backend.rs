@@ -1,9 +1,17 @@
 use crate::{
-    completion::completions, definition::definition, diagnostics::collect_diagnostics,
-    formatting::format_document, hover::hover, symbols::document_symbols,
+    code_lens::{code_lenses, NOOP_COMMAND, RUN_ENTRY_COMMAND},
+    completion::completions_with_external,
+    definition::definition_with_external,
+    diagnostics::collect_diagnostics_with_external,
+    formatting::format_document,
+    hover::hover_with_external,
+    symbols::document_symbols,
+    variables::load_workspace_variables,
 };
 use dashmap::DashMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use tokio::process::Command as TokioCommand;
 use tower_lsp::{jsonrpc::Result, lsp_types::*, Client, LanguageServer};
 use url::Url;
 
@@ -44,7 +52,9 @@ impl Backend {
     }
 
     async fn publish_diagnostics(&self, uri: Url, text: &str) {
-        let diagnostics = collect_diagnostics(text);
+        let external = load_workspace_variables(&uri);
+        let external_names: BTreeSet<String> = external.into_iter().map(|item| item.name).collect();
+        let diagnostics = collect_diagnostics_with_external(text, &external_names);
         self.client
             .publish_diagnostics(uri, diagnostics, None)
             .await;
@@ -68,6 +78,13 @@ impl LanguageServer for Backend {
                 document_formatting_provider: Some(OneOf::Left(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
                 definition_provider: Some(OneOf::Left(true)),
+                code_lens_provider: Some(CodeLensOptions {
+                    resolve_provider: Some(false),
+                }),
+                execute_command_provider: Some(ExecuteCommandOptions {
+                    commands: vec![RUN_ENTRY_COMMAND.to_string(), NOOP_COMMAND.to_string()],
+                    work_done_progress_options: WorkDoneProgressOptions::default(),
+                }),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -114,10 +131,13 @@ impl LanguageServer for Backend {
         let Some(text) = self.document_text(&uri) else {
             return Ok(None);
         };
+        let external = load_workspace_variables(&uri);
+        let external_names: BTreeSet<String> = external.into_iter().map(|item| item.name).collect();
 
-        Ok(Some(CompletionResponse::Array(completions(
+        Ok(Some(CompletionResponse::Array(completions_with_external(
             &text,
             params.text_document_position.position,
+            &external_names,
         ))))
     }
 
@@ -127,8 +147,13 @@ impl LanguageServer for Backend {
         let Some(text) = self.document_text(&uri) else {
             return Ok(None);
         };
+        let external = load_workspace_variables(&uri);
+        let external_map: BTreeMap<String, String> = external
+            .into_iter()
+            .map(|item| (item.name, item.value))
+            .collect();
 
-        Ok(hover(&text, position))
+        Ok(hover_with_external(&text, position, &external_map))
     }
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
@@ -163,6 +188,14 @@ impl LanguageServer for Backend {
         ))))
     }
 
+    async fn code_lens(&self, params: CodeLensParams) -> Result<Option<Vec<CodeLens>>> {
+        let uri = params.text_document.uri;
+        let Some(text) = self.document_text(&uri) else {
+            return Ok(None);
+        };
+        Ok(Some(code_lenses(&uri, &text)))
+    }
+
     async fn goto_definition(
         &self,
         params: GotoDefinitionParams,
@@ -172,8 +205,90 @@ impl LanguageServer for Backend {
         let Some(text) = self.document_text(&uri) else {
             return Ok(None);
         };
+        let external = load_workspace_variables(&uri);
 
-        Ok(definition(&uri, &text, &text_document_position))
+        Ok(definition_with_external(
+            &uri,
+            &text,
+            &text_document_position,
+            &external,
+        ))
+    }
+
+    async fn execute_command(
+        &self,
+        params: ExecuteCommandParams,
+    ) -> Result<Option<serde_json::Value>> {
+        if params.command == NOOP_COMMAND {
+            return Ok(None);
+        }
+        if params.command != RUN_ENTRY_COMMAND {
+            return Ok(None);
+        }
+        let arguments = params.arguments;
+        if arguments.is_empty() {
+            return Ok(None);
+        }
+        let Some(uri_value) = arguments.first() else {
+            return Ok(None);
+        };
+        let Some(uri_str) = uri_value.as_str() else {
+            return Ok(None);
+        };
+        let Ok(uri) = Url::parse(uri_str) else {
+            return Ok(None);
+        };
+        let Ok(path) = uri.to_file_path() else {
+            self.client
+                .show_message(
+                    MessageType::ERROR,
+                    "Run is only supported for local file documents.",
+                )
+                .await;
+            return Ok(None);
+        };
+
+        let output = TokioCommand::new("hurl").arg(&path).output().await;
+        match output {
+            Ok(output) if output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let message = if stdout.trim().is_empty() {
+                    format!("hurl run succeeded: {}", path.display())
+                } else {
+                    format!("hurl run succeeded:\n{}", truncate_message(stdout.as_ref()))
+                };
+                self.client.show_message(MessageType::INFO, message).await;
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let detail = if stderr.trim().is_empty() {
+                    format!("exit status: {}", output.status)
+                } else {
+                    truncate_message(stderr.as_ref())
+                };
+                self.client
+                    .show_message(MessageType::ERROR, format!("hurl run failed: {detail}"))
+                    .await;
+            }
+            Err(error) => {
+                self.client
+                    .show_message(
+                        MessageType::ERROR,
+                        format!("Failed to execute hurl: {error}"),
+                    )
+                    .await;
+            }
+        }
+        Ok(None)
+    }
+}
+
+fn truncate_message(input: &str) -> String {
+    const MAX: usize = 600;
+    if input.len() <= MAX {
+        input.to_string()
+    } else {
+        format!("{}...", &input[..MAX])
     }
 }
 

@@ -1,4 +1,5 @@
 mod backend;
+mod code_lens;
 mod completion;
 mod definition;
 mod diagnostics;
@@ -7,6 +8,7 @@ mod hover;
 mod metadata;
 mod symbols;
 mod syntax;
+mod variables;
 
 use backend::Backend;
 use tower_lsp::{LspService, Server};
