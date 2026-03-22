@@ -96,8 +96,9 @@ jobs:
         with:
           path: dist
       - name: Publish GitHub Release assets
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/**/*.tar.gz
-            dist/**/*.zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          gh release view "${tag}" >/dev/null 2>&1 || gh release create "${tag}" --title "${tag}" --notes ""
+          find dist -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print0 | xargs -0 gh release upload "${tag}" --clobber
