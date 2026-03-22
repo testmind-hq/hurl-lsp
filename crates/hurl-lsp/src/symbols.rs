@@ -1,8 +1,8 @@
 use crate::{
     diagnostics::parse_document,
-    metadata::{CaseKind, HurlMetaParser, Priority, StepType},
+    metadata::{infer_entry_dependencies, CaseKind, HurlMetaParser, Priority, StepType},
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use tower_lsp::lsp_types::{DocumentSymbol, Position, Range, SymbolKind};
 
 #[allow(deprecated)]
@@ -14,6 +14,19 @@ pub fn document_symbols(text: &str) -> Vec<DocumentSymbol> {
     let mut chain_meta: BTreeMap<String, (Option<String>, Option<Priority>)> = BTreeMap::new();
     let mut single_groups: BTreeMap<&'static str, Vec<DocumentSymbol>> = BTreeMap::new();
     let mut fallback = Vec::new();
+    let inferred = infer_entry_dependencies(text, &meta);
+    let chain_lines: BTreeSet<u32> = meta
+        .entries
+        .iter()
+        .filter(|entry| entry.case_kind == Some(CaseKind::Chain))
+        .map(|entry| entry.line)
+        .collect();
+    let auto_chain_lines: BTreeSet<u32> = inferred
+        .iter()
+        .filter(|dep| !chain_lines.contains(&dep.from_line) && !chain_lines.contains(&dep.to_line))
+        .flat_map(|dep| [dep.from_line, dep.to_line])
+        .collect();
+    let mut auto_chain_children = Vec::new();
 
     for idx in 0..len {
         let entry = &parsed.entries[idx];
@@ -34,6 +47,13 @@ pub fn document_symbols(text: &str) -> Vec<DocumentSymbol> {
                     .or_insert((entry_meta.title.clone(), entry_meta.priority.clone()));
             }
             _ => {
+                if auto_chain_lines.contains(&entry.line) {
+                    auto_chain_children.push(leaf_symbol(
+                        entry.line,
+                        format!("🔗 {} {}", entry.method, entry.path),
+                    ));
+                    continue;
+                }
                 if let Some(priority) = &entry_meta.priority {
                     let label = priority_label(priority);
                     let case_name = single_case_name(entry_meta, &entry.method, &entry.path);
@@ -67,6 +87,10 @@ pub fn document_symbols(text: &str) -> Vec<DocumentSymbol> {
             format!("🔗 {case_id} {title}{priority_suffix}")
         };
         root.push(group_symbol(group_name, children));
+    }
+
+    if !auto_chain_children.is_empty() {
+        root.push(group_symbol("🔗 自动识别".to_string(), auto_chain_children));
     }
 
     for label in ["🟥 P0", "🟧 P1", "🟨 P2"] {
@@ -212,5 +236,27 @@ HTTP 201
         assert!(symbols[0].name.starts_with("🔗 TC-CHAIN-001"));
         let children = symbols[0].children.as_ref().expect("chain children");
         assert_eq!(children[0].name, "🔧 Create user setup");
+    }
+
+    #[test]
+    fn groups_inferred_chain_entries_under_auto_group() {
+        let text = r#"
+# step_id=setup
+POST /users
+HTTP 201
+[Captures]
+user_id: jsonpath "$.id"
+
+# step_id=test
+GET /users/{{user_id}}
+HTTP 200
+"#;
+        let symbols = document_symbols(text);
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "🔗 自动识别");
+        let children = symbols[0].children.as_ref().expect("auto children");
+        assert_eq!(children.len(), 2);
+        assert!(children[0].name.contains("POST /users"));
+        assert!(children[1].name.contains("GET /users/{{user_id}}"));
     }
 }

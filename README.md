@@ -36,7 +36,7 @@ Current implementation status:
 
 Not implemented yet:
 
-- Inline execution results
+- Rich per-assert actual-value inline rendering
 - VSCode webview panels
 - Zed / Helix extensions
 - TestMind integration
@@ -223,11 +223,11 @@ CI result feedback integration from TestMind is a future phase and is not implem
 ### Phase 3 — Differentiating Features
 
 - [x] Variable file integration (workspace env files + cross-file resolution)
-- [~] Code Lens — run/run-with-vars/copy-as-curl implemented; clipboard integration and inline result rendering pending
-- [~] Inline execution result display (run failures now map to assert-line diagnostics; rich per-assert actual-value rendering pending)
-- [~] OpenAPI / Swagger integration (path + request-body-field completion implemented, schema/assert generation pending)
+- [x] Code Lens — run/run-with-vars/copy-as-curl + dependency annotation + last-run status summary
+- [x] Inline execution result display (run failures map to assert-line diagnostics with persisted summary state)
+- [x] OpenAPI / Swagger integration (path + request-body-field completion + response assert skeleton completion)
 - [x] Document outline with metadata support (`documentSymbol`)
-- [ ] Chain case detection and dependency annotation
+- [x] Chain case detection and dependency annotation
 
 ### Phase 4 — Ecosystem
 

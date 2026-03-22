@@ -63,6 +63,31 @@ pub fn load_openapi_request_body_fields_with_roots(
     fields
 }
 
+pub fn load_openapi_response_fields_with_roots(
+    document_uri: &Url,
+    workspace_roots: &[PathBuf],
+) -> BTreeMap<String, BTreeSet<String>> {
+    let Some(base_dir) = base_dir_from_uri(document_uri) else {
+        return BTreeMap::new();
+    };
+    let dirs = bounded_ancestor_dirs(base_dir, workspace_roots);
+    let mut fields = BTreeMap::<String, BTreeSet<String>>::new();
+
+    for dir in dirs {
+        for name in OPENAPI_FILES {
+            let file_path = dir.join(name);
+            if !file_path.exists() || !file_path.is_file() {
+                continue;
+            }
+            let parsed = parse_openapi_response_fields(&file_path);
+            for (key, props) in parsed {
+                fields.entry(key).or_default().extend(props);
+            }
+        }
+    }
+    fields
+}
+
 fn parse_openapi_paths(path: &Path) -> BTreeSet<String> {
     let Ok(content) = fs::read_to_string(path) else {
         return BTreeSet::new();
@@ -89,6 +114,20 @@ fn parse_openapi_request_body_fields(path: &Path) -> BTreeMap<String, BTreeSet<S
             .and_then(|yaml| serde_json::to_value(yaml).ok())
     };
     extract_request_body_fields(value.as_ref())
+}
+
+fn parse_openapi_response_fields(path: &Path) -> BTreeMap<String, BTreeSet<String>> {
+    let Ok(content) = fs::read_to_string(path) else {
+        return BTreeMap::new();
+    };
+    let value = if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+        serde_json::from_str::<serde_json::Value>(&content).ok()
+    } else {
+        serde_yaml::from_str::<serde_yaml::Value>(&content)
+            .ok()
+            .and_then(|yaml| serde_json::to_value(yaml).ok())
+    };
+    extract_response_fields(value.as_ref())
 }
 
 fn extract_paths(value: Option<&serde_json::Value>) -> BTreeSet<String> {
@@ -154,6 +193,84 @@ fn extract_request_body_fields(
     }
 
     out
+}
+
+fn extract_response_fields(
+    value: Option<&serde_json::Value>,
+) -> BTreeMap<String, BTreeSet<String>> {
+    let mut out = BTreeMap::new();
+    let Some(value) = value else {
+        return out;
+    };
+    let Some(paths) = value.get("paths").and_then(|item| item.as_object()) else {
+        return out;
+    };
+
+    for (path, operations) in paths {
+        let Some(ops) = operations.as_object() else {
+            continue;
+        };
+        for (method, op) in ops {
+            let method_upper = method.to_ascii_uppercase();
+            if !matches!(
+                method_upper.as_str(),
+                "GET"
+                    | "POST"
+                    | "PUT"
+                    | "PATCH"
+                    | "DELETE"
+                    | "HEAD"
+                    | "OPTIONS"
+                    | "CONNECT"
+                    | "TRACE"
+            ) {
+                continue;
+            }
+            let Some(responses) = op.get("responses").and_then(|item| item.as_object()) else {
+                continue;
+            };
+            for (status, response_raw) in responses {
+                let response = resolve_local_ref(response_raw, value).unwrap_or(response_raw);
+                let Some(content) = response.get("content").and_then(|item| item.as_object())
+                else {
+                    continue;
+                };
+                let mut all_properties = BTreeSet::new();
+                for (media_type, media_schema) in content {
+                    if !is_json_media_type(media_type) {
+                        continue;
+                    }
+                    let Some(schema) = media_schema.get("schema") else {
+                        continue;
+                    };
+                    collect_schema_property_names(schema, value, &mut all_properties, 0);
+                }
+                if all_properties.is_empty() {
+                    continue;
+                }
+
+                let key = format!("{method_upper} {path} {status}");
+                out.entry(key).or_default().extend(all_properties);
+            }
+        }
+    }
+
+    out
+}
+
+fn resolve_local_ref<'a>(
+    value: &'a serde_json::Value,
+    root: &'a serde_json::Value,
+) -> Option<&'a serde_json::Value> {
+    let reference = value.get("$ref").and_then(|item| item.as_str())?;
+    let pointer = reference.strip_prefix('#')?;
+    root.pointer(pointer)
+}
+
+fn is_json_media_type(media_type: &str) -> bool {
+    media_type == "*/*"
+        || media_type.eq_ignore_ascii_case("application/json")
+        || media_type.to_ascii_lowercase().ends_with("+json")
 }
 
 fn collect_schema_property_names(
@@ -328,6 +445,66 @@ mod tests {
         let props = fields.get(&key).expect("POST /users fields");
         assert!(props.contains("email"));
         assert!(props.contains("age"));
+
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn loads_response_fields_from_ref_schema() {
+        let base = tmp_dir("hurl-lsp-openapi-response-ref");
+        fs::create_dir_all(&base).expect("mkdir");
+        fs::write(
+            base.join("openapi.yaml"),
+            "openapi: 3.0.0\npaths:\n  /users:\n    post:\n      responses:\n        '201':\n          content:\n            application/json:\n              schema:\n                $ref: '#/components/schemas/UserCreated'\ncomponents:\n  schemas:\n    UserCreated:\n      type: object\n      properties:\n        id:\n          type: string\n        status:\n          type: string\n",
+        )
+        .expect("write yaml");
+        let uri = Url::from_file_path(base.join("test.hurl")).expect("uri");
+
+        let fields = load_openapi_response_fields_with_roots(&uri, std::slice::from_ref(&base));
+        let key = "POST /users 201".to_string();
+        let props = fields.get(&key).expect("POST /users 201 fields");
+        assert!(props.contains("id"));
+        assert!(props.contains("status"));
+
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn loads_response_fields_from_response_object_ref() {
+        let base = tmp_dir("hurl-lsp-openapi-response-object-ref");
+        fs::create_dir_all(&base).expect("mkdir");
+        fs::write(
+            base.join("openapi.yaml"),
+            "openapi: 3.0.0\npaths:\n  /users:\n    post:\n      responses:\n        '201':\n          $ref: '#/components/responses/UserCreated'\ncomponents:\n  responses:\n    UserCreated:\n      description: user created\n      content:\n        application/json:\n          schema:\n            type: object\n            properties:\n              id:\n                type: string\n              status:\n                type: string\n",
+        )
+        .expect("write yaml");
+        let uri = Url::from_file_path(base.join("test.hurl")).expect("uri");
+
+        let fields = load_openapi_response_fields_with_roots(&uri, std::slice::from_ref(&base));
+        let key = "POST /users 201".to_string();
+        let props = fields.get(&key).expect("POST /users 201 fields");
+        assert!(props.contains("id"));
+        assert!(props.contains("status"));
+
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn loads_response_fields_from_problem_json_media_type() {
+        let base = tmp_dir("hurl-lsp-openapi-response-problem-json");
+        fs::create_dir_all(&base).expect("mkdir");
+        fs::write(
+            base.join("openapi.yaml"),
+            "openapi: 3.0.0\npaths:\n  /users:\n    get:\n      responses:\n        '400':\n          content:\n            application/problem+json:\n              schema:\n                type: object\n                properties:\n                  title:\n                    type: string\n                  detail:\n                    type: string\n",
+        )
+        .expect("write yaml");
+        let uri = Url::from_file_path(base.join("test.hurl")).expect("uri");
+
+        let fields = load_openapi_response_fields_with_roots(&uri, std::slice::from_ref(&base));
+        let key = "GET /users 400".to_string();
+        let props = fields.get(&key).expect("GET /users 400 fields");
+        assert!(props.contains("title"));
+        assert!(props.contains("detail"));
 
         let _ = fs::remove_dir_all(base);
     }

@@ -28,6 +28,7 @@ pub fn completions(text: &str, position: Position) -> Vec<CompletionItem> {
         &BTreeSet::new(),
         &BTreeSet::new(),
         &BTreeMap::new(),
+        &BTreeMap::new(),
     )
 }
 
@@ -37,6 +38,7 @@ pub fn completions_with_external(
     external_variables: &BTreeSet<String>,
     openapi_paths: &BTreeSet<String>,
     openapi_body_fields: &BTreeMap<String, BTreeSet<String>>,
+    openapi_response_fields: &BTreeMap<String, BTreeSet<String>>,
 ) -> Vec<CompletionItem> {
     let line_idx = position.line as usize;
     let line = text.lines().nth(position.line as usize).unwrap_or_default();
@@ -66,7 +68,7 @@ pub fn completions_with_external(
     }
 
     if in_asserts_block(text, line_idx) {
-        return ASSERTS
+        let mut items = ASSERTS
             .iter()
             .map(|(label, detail)| CompletionItem {
                 label: (*label).into(),
@@ -75,7 +77,22 @@ pub fn completions_with_external(
                 insert_text: Some(format!("{label} ")),
                 ..Default::default()
             })
-            .collect();
+            .collect::<Vec<_>>();
+        if let Some(key) = current_assert_response_key(text, line_idx) {
+            if let Some(fields) = openapi_response_fields.get(&key) {
+                for field in fields {
+                    let skeleton = format!("jsonpath \"$.{field}\" exists");
+                    items.push(CompletionItem {
+                        label: skeleton.clone(),
+                        kind: Some(CompletionItemKind::SNIPPET),
+                        detail: Some("OpenAPI response assert skeleton".into()),
+                        insert_text: Some(skeleton),
+                        ..Default::default()
+                    });
+                }
+            }
+        }
+        return items;
     }
 
     if prefix.contains("Content-Type:") {
@@ -227,6 +244,40 @@ fn current_operation_key(text: &str, line_idx: usize) -> Option<String> {
     Some(format!("{} {}", method?, path?))
 }
 
+fn current_assert_response_key(text: &str, line_idx: usize) -> Option<String> {
+    let mut method = None::<String>;
+    let mut path = None::<String>;
+    let mut status = None::<String>;
+    let mut current_section = None::<&str>;
+
+    for (idx, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        if method_from_line(trimmed).is_some() {
+            let mut parts = trimmed.split_whitespace();
+            method = Some(parts.next().unwrap_or_default().to_string());
+            path = Some(parts.next().unwrap_or_default().to_string());
+            status = None;
+            current_section = None;
+        } else if let Some(rest) = trimmed.strip_prefix("HTTP ") {
+            let token = rest.split_whitespace().next().unwrap_or_default();
+            if !token.is_empty() {
+                status = Some(token.to_string());
+            }
+            current_section = None;
+        } else if let Some(section) = section_name_from_line(trimmed) {
+            current_section = Some(section);
+        }
+        if idx == line_idx {
+            break;
+        }
+    }
+
+    if current_section != Some("Asserts") {
+        return None;
+    }
+    Some(format!("{} {} {}", method?, path?, status?))
+}
+
 fn known_variables(
     text: &str,
     line_idx: usize,
@@ -273,6 +324,7 @@ mod tests {
             &vars,
             &BTreeSet::new(),
             &BTreeMap::new(),
+            &BTreeMap::new(),
         );
         assert!(items.iter().any(|item| item.label == "host"));
     }
@@ -288,6 +340,7 @@ mod tests {
             Position::new(0, 7),
             &BTreeSet::new(),
             &paths,
+            &BTreeMap::new(),
             &BTreeMap::new(),
         );
         assert!(items.iter().any(|item| item.label == "/users"));
@@ -309,6 +362,7 @@ mod tests {
             &BTreeSet::new(),
             &BTreeSet::new(),
             &fields,
+            &BTreeMap::new(),
         );
         assert!(items.iter().any(|item| item.label == "email"));
         assert!(!items.iter().any(|item| item.label == "age"));
@@ -328,8 +382,30 @@ mod tests {
             &BTreeSet::new(),
             &BTreeSet::new(),
             &fields,
+            &BTreeMap::new(),
         );
         assert!(!items.iter().any(|item| item.label == "email"));
+    }
+
+    #[test]
+    fn returns_openapi_response_assert_skeleton_completion() {
+        let text = "POST /users\nHTTP 201\n[Asserts]\njs";
+        let mut response_fields = BTreeMap::new();
+        response_fields.insert(
+            "POST /users 201".to_string(),
+            BTreeSet::from(["id".to_string(), "status".to_string()]),
+        );
+        let items = completions_with_external(
+            text,
+            Position::new(3, 2),
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            &BTreeMap::new(),
+            &response_fields,
+        );
+        assert!(items
+            .iter()
+            .any(|item| item.label == "jsonpath \"$.id\" exists"));
     }
 
     #[test]

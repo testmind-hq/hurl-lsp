@@ -1,6 +1,13 @@
 use crate::syntax::{method_from_line, section_name_from_line};
 use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RunSummary {
+    pub success: bool,
+    pub failed_asserts: usize,
+    pub duration_ms: Option<u64>,
+}
+
 pub fn execution_diagnostics_for_result(line: u32, success: bool, detail: &str) -> Vec<Diagnostic> {
     if success {
         return Vec::new();
@@ -61,6 +68,15 @@ pub fn execution_diagnostics_for_entry_failure(
     diagnostics
 }
 
+pub fn parse_run_summary(stderr: &str, stdout: &str, success: bool) -> RunSummary {
+    let failed_asserts = parse_failed_assert_count(stderr).max(parse_failed_assert_count(stdout));
+    RunSummary {
+        success,
+        failed_asserts,
+        duration_ms: parse_duration_ms(stderr).or_else(|| parse_duration_ms(stdout)),
+    }
+}
+
 fn parse_failed_assert(detail: &str) -> Option<&str> {
     const MARKER: &[u8] = b"assert failed:";
     for (idx, _) in detail.char_indices() {
@@ -74,6 +90,52 @@ fn parse_failed_assert(detail: &str) -> Option<&str> {
                 return Some(suffix);
             }
             return None;
+        }
+    }
+    None
+}
+
+fn parse_failed_assert_count(detail: &str) -> usize {
+    let lower = detail.to_ascii_lowercase();
+    let marker = "assert failed";
+    let Some(pos) = lower.find(marker) else {
+        return 0;
+    };
+    let prefix = &lower[..pos];
+    let digits_rev: String = prefix
+        .chars()
+        .rev()
+        .skip_while(|ch| ch.is_whitespace())
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect();
+    if digits_rev.is_empty() {
+        1
+    } else {
+        digits_rev
+            .chars()
+            .rev()
+            .collect::<String>()
+            .parse::<usize>()
+            .unwrap_or(1)
+    }
+}
+
+fn parse_duration_ms(detail: &str) -> Option<u64> {
+    let lower = detail.to_ascii_lowercase();
+    let bytes = lower.as_bytes();
+    for idx in 1..bytes.len() {
+        if bytes[idx - 1] == b'm' && bytes[idx] == b's' {
+            let mut begin = idx.saturating_sub(2);
+            while begin > 0 && bytes[begin].is_ascii_whitespace() {
+                begin -= 1;
+            }
+            while begin > 0 && bytes[begin - 1].is_ascii_digit() {
+                begin -= 1;
+            }
+            let candidate = lower[begin..idx.saturating_sub(1)].trim();
+            if let Ok(value) = candidate.parse::<u64>() {
+                return Some(value);
+            }
         }
     }
     None
@@ -120,5 +182,21 @@ mod tests {
             execution_diagnostics_for_entry_failure(source, 0, "Assert Failed: status == 201");
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].range.start.line, 3);
+    }
+
+    #[test]
+    fn parses_run_summary_with_failed_asserts_and_duration() {
+        let summary = parse_run_summary("2 assert failed · 230ms", "", false);
+        assert!(!summary.success);
+        assert_eq!(summary.failed_asserts, 2);
+        assert_eq!(summary.duration_ms, Some(230));
+    }
+
+    #[test]
+    fn parses_failed_assert_count_from_stdout_when_stderr_empty() {
+        let summary = parse_run_summary("", "1 assert failed · 120ms", false);
+        assert!(!summary.success);
+        assert_eq!(summary.failed_asserts, 1);
+        assert_eq!(summary.duration_ms, Some(120));
     }
 }
