@@ -100,6 +100,10 @@ are also suggested inside JSON request bodies.
 
 `Format Document` is backed by official `hurlfmt::format::format_text(..., false)` through LSP.
 
+### Markdown Export (VSCode)
+
+Command `Hurl: Export as Markdown` exports current `.hurl` file into a sibling `.md` file.
+
 ### Document Outline
 
 The server exposes metadata-first document symbols with request-level fallback:
@@ -248,7 +252,7 @@ CI result feedback integration from TestMind is a future phase and is not implem
 ### Phase 4 — Ecosystem
 
 - [ ] VSCode Webview panel (single entry view + chain flow graph)
-- [ ] Markdown export command
+- [~] Markdown export command (VSCode baseline implemented)
 - [~] Homebrew distribution (formula + checksum flow prepared)
 - [ ] Upstream PR to Hurl official docs (editor support page)
 - [ ] TestMind CI result feedback integration

@@ -21,7 +21,8 @@
     "onLanguage:hurl",
     "onCommand:hurl.restartLanguageServer",
     "onCommand:hurl.showLog",
-    "onCommand:hurl.showRequestLog"
+    "onCommand:hurl.showRequestLog",
+    "onCommand:hurl.exportAsMarkdown"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -97,6 +98,10 @@
       {
         "command": "hurl.showRequestLog",
         "title": "Hurl: Show Request Log"
+      },
+      {
+        "command": "hurl.exportAsMarkdown",
+        "title": "Hurl: Export as Markdown"
       }
     ]
   },

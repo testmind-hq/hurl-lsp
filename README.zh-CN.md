@@ -95,6 +95,10 @@ English README: [`README.md`](README.md)
 
 `Format Document` 通过 LSP 调用官方 `hurlfmt::format::format_text(..., false)`。
 
+### Markdown 导出（VSCode）
+
+命令 `Hurl: Export as Markdown` 可将当前 `.hurl` 文件导出为同目录 `.md` 文件。
+
 ### 文档大纲（Document Symbol）
 
 支持优先展示元数据结构；若无元数据则回退到请求级符号。
@@ -207,7 +211,7 @@ Homebrew 公式位于：`packaging/homebrew/Formula/hurl-lsp.rb`
 ### Phase 4（生态）
 
 - [ ] VSCode Webview
-- [ ] Markdown 导出
+- [~] Markdown 导出（VSCode 基线已实现）
 - [~] Homebrew 分发（公式与校验和流程已就绪）
 - [ ] Hurl 官方文档 PR
 - [ ] TestMind CI 结果回流

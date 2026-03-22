@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions } from "vscode-languageclient/node";
 import { Trace } from "vscode-jsonrpc";
 import { ensureBinary } from "./download";
+import { exportActiveHurlAsMarkdown } from "./markdownExport";
 
 let client: LanguageClient | undefined;
 let runtimeLogChannel: vscode.OutputChannel | undefined;
@@ -29,6 +30,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand("hurl.showRequestLog", () => {
       requestLogChannel?.show(true);
+    }),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("hurl.exportAsMarkdown", async () => {
+      await exportActiveHurlAsMarkdown();
     }),
   );
 
