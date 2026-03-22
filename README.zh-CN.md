@@ -84,6 +84,11 @@ English README: [`README.md`](README.md)
 - `📄 Run file`（执行当前文件全部请求）
 - `📋 Copy as curl`（复制 curl）
 
+运行告警行为：
+
+- `hurl.run.inlineFailureDiagnostics`：默认 `true`，显示红色行内失败诊断；设为 `false` 可关闭
+- `Hurl: Clear Run Alerts`：立即清除当前文件的运行告警诊断
+
 ### OpenAPI 联动补全
 
 当工作区存在 `openapi.yaml` / `openapi.yml` / `swagger.yaml` / `swagger.yml` / `swagger.json` 时：
@@ -94,14 +99,29 @@ English README: [`README.md`](README.md)
 ### 内置格式化
 
 `Format Document` 通过 LSP 调用官方 `hurlfmt::format::format_text(..., false)`。
+可使用命令 `Hurl: Format Document` 显式触发格式化，并在运行日志中查看记录。
 
 ### Markdown 导出（VSCode）
 
 命令 `Hurl: Export as Markdown` 可将当前 `.hurl` 文件导出为同目录 `.md` 文件。
+导出会遵循大纲配置：
+
+- `hurl.outline.groupMode`: `hierarchical` | `flat`
+- `hurl.outline.sortMode`: `source` | `priority`
 
 ### 文档大纲（Document Symbol）
 
 支持优先展示元数据结构；若无元数据则回退到请求级符号。
+
+可通过 VSCode 配置控制行为：
+
+- `hurl.outline.groupMode`：`hierarchical` 保留 chain/priority 分组，`flat` 仅显示请求条目
+- `hurl.outline.sortMode`：`source` 按文件顺序，`priority` 按 `P0 > P1 > P2`（步骤顺序为 `setup > test > teardown`）
+
+在 VSCode 资源管理器中，`Hurl Requests` 视图提供可执行请求节点和内联动作：
+
+- `Run`（执行该请求）
+- `Run Chain`（执行该请求及其推断/声明依赖）
 
 ---
 
@@ -211,7 +231,7 @@ Homebrew 公式位于：`packaging/homebrew/Formula/hurl-lsp.rb`
 ### Phase 4（生态）
 
 - [ ] VSCode Webview
-- [~] Markdown 导出（VSCode 基线已实现）
+- [x] Markdown 导出（已支持分组/排序联动）
 - [~] Homebrew 分发（公式与校验和流程已就绪）
 - [ ] Hurl 官方文档 PR
 - [ ] TestMind CI 结果回流

@@ -3,7 +3,7 @@
   "displayName": "Hurl",
   "description": "VSCode support for Hurl powered by hurl-lsp",
   "version": "0.1.5",
-  "publisher": "yuchou87",
+  "publisher": "testmind",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -22,7 +22,10 @@
     "onCommand:hurl.restartLanguageServer",
     "onCommand:hurl.showLog",
     "onCommand:hurl.showRequestLog",
-    "onCommand:hurl.exportAsMarkdown"
+    "onCommand:hurl.formatDocument",
+    "onCommand:hurl.exportAsMarkdown",
+    "onCommand:hurl.clearRunAlerts",
+    "onView:hurlRequests"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -83,6 +86,23 @@
           "default": 6000,
           "minimum": 0,
           "description": "Maximum characters per run chunk in request logs. Set 0 to disable truncation."
+        },
+        "hurl.run.inlineFailureDiagnostics": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show inline red diagnostics when Run/Run Chain execution fails."
+        },
+        "hurl.outline.groupMode": {
+          "type": "string",
+          "enum": ["hierarchical", "flat"],
+          "default": "hierarchical",
+          "description": "Outline grouping mode."
+        },
+        "hurl.outline.sortMode": {
+          "type": "string",
+          "enum": ["source", "priority"],
+          "default": "source",
+          "description": "Outline sorting mode."
         }
       }
     },
@@ -102,8 +122,49 @@
       {
         "command": "hurl.exportAsMarkdown",
         "title": "Hurl: Export as Markdown"
+      },
+      {
+        "command": "hurl.formatDocument",
+        "title": "Hurl: Format Document"
+      },
+      {
+        "command": "hurl.clearRunAlerts",
+        "title": "Hurl: Clear Run Alerts"
+      },
+      {
+        "command": "hurl.outline.runEntry",
+        "title": "Run Request Entry",
+        "icon": "$(play)"
+      },
+      {
+        "command": "hurl.outline.runChain",
+        "title": "Run Request Chain (with dependencies)",
+        "icon": "$(debug-continue)"
       }
-    ]
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "hurlRequests",
+          "name": "Hurl Requests",
+          "when": "editorLangId == hurl || resourceExtname == .hurl"
+        }
+      ]
+    },
+    "menus": {
+      "view/item/context": [
+        {
+          "command": "hurl.outline.runEntry",
+          "when": "view == hurlRequests && viewItem == hurlOutlineEntry",
+          "group": "inline@1"
+        },
+        {
+          "command": "hurl.outline.runChain",
+          "when": "view == hurlRequests && viewItem == hurlOutlineEntry",
+          "group": "inline@2"
+        }
+      ]
+    }
   },
   "scripts": {
     "build": "tsc -p ./",

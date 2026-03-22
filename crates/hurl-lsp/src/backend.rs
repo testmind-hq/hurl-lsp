@@ -1,8 +1,8 @@
 use crate::{
     code_lens::{
-        build_curl_for_entry, code_lenses_with_context, extract_entry_text, COPY_AS_CURL_COMMAND,
-        NOOP_COMMAND, RUN_CHAIN_COMMAND, RUN_ENTRY_COMMAND, RUN_ENTRY_WITH_VARS_COMMAND,
-        RUN_FILE_COMMAND,
+        build_curl_for_entry, code_lenses_with_context, extract_entry_text,
+        CLEAR_RUN_DIAGNOSTICS_COMMAND, COPY_AS_CURL_COMMAND, NOOP_COMMAND, RUN_CHAIN_COMMAND,
+        RUN_ENTRY_COMMAND, RUN_ENTRY_WITH_VARS_COMMAND, RUN_FILE_COMMAND,
     },
     completion::completions_with_external,
     definition::definition_with_external,
@@ -232,6 +232,7 @@ impl LanguageServer for Backend {
                         RUN_CHAIN_COMMAND.to_string(),
                         RUN_FILE_COMMAND.to_string(),
                         COPY_AS_CURL_COMMAND.to_string(),
+                        CLEAR_RUN_DIAGNOSTICS_COMMAND.to_string(),
                         NOOP_COMMAND.to_string(),
                     ],
                     work_done_progress_options: WorkDoneProgressOptions::default(),
@@ -327,16 +328,33 @@ impl LanguageServer for Backend {
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
         let uri = params.text_document.uri;
         let Some(text) = self.document_text(&uri) else {
+            self.log_execution(format!("format skipped: document not found for {}", uri))
+                .await;
             return Ok(None);
         };
         let Some(formatted) = format_document(&text) else {
+            self.log_execution(format!(
+                "format skipped: parse/format failed for {} (check syntax/diagnostics)",
+                uri
+            ))
+            .await;
+            self.client
+                .show_message(
+                    MessageType::WARNING,
+                    "Hurl format skipped: file has parse errors or unsupported syntax.",
+                )
+                .await;
             return Ok(None);
         };
         if formatted == text {
+            self.log_execution(format!("format no-op: already formatted for {}", uri))
+                .await;
             return Ok(Some(Vec::new()));
         }
 
         let end_position = position_for_end(&text);
+        self.log_execution(format!("format applied for {}", uri))
+            .await;
         Ok(Some(vec![TextEdit {
             range: Range::new(Position::new(0, 0), end_position),
             new_text: formatted,
@@ -401,6 +419,7 @@ impl LanguageServer for Backend {
             && params.command != RUN_CHAIN_COMMAND
             && params.command != RUN_FILE_COMMAND
             && params.command != COPY_AS_CURL_COMMAND
+            && params.command != CLEAR_RUN_DIAGNOSTICS_COMMAND
         {
             return Ok(None);
         }
@@ -417,6 +436,20 @@ impl LanguageServer for Backend {
         let Ok(uri) = Url::parse(uri_str) else {
             return Ok(None);
         };
+        if params.command == CLEAR_RUN_DIAGNOSTICS_COMMAND {
+            self.execution_diagnostics.remove(&uri);
+            if let Some(text) = self.document_text(&uri) {
+                self.publish_diagnostics(uri.clone(), &text).await;
+            } else {
+                self.client
+                    .publish_diagnostics(uri.clone(), Vec::new(), None)
+                    .await;
+            }
+            self.client
+                .show_message(MessageType::INFO, "Cleared hurl run alerts.")
+                .await;
+            return Ok(None);
+        }
         let line = arguments
             .get(1)
             .and_then(|value| value.as_u64())
@@ -598,10 +631,14 @@ impl LanguageServer for Backend {
                 } else {
                     truncate_message(stderr.as_ref())
                 };
-                self.execution_diagnostics.insert(
-                    uri.clone(),
-                    execution_diagnostics_for_entry_failure(&text, line as u32, &detail),
-                );
+                if run_inline_failure_diagnostics_enabled() {
+                    self.execution_diagnostics.insert(
+                        uri.clone(),
+                        execution_diagnostics_for_entry_failure(&text, line as u32, &detail),
+                    );
+                } else {
+                    self.execution_diagnostics.remove(&uri);
+                }
                 apply_run_summary(
                     &self.execution_summaries,
                     &uri,
@@ -635,10 +672,14 @@ impl LanguageServer for Backend {
             }
             Err(error) => {
                 let err_text = error.to_string();
-                self.execution_diagnostics.insert(
-                    uri.clone(),
-                    execution_diagnostics_for_entry_failure(&text, line as u32, &err_text),
-                );
+                if run_inline_failure_diagnostics_enabled() {
+                    self.execution_diagnostics.insert(
+                        uri.clone(),
+                        execution_diagnostics_for_entry_failure(&text, line as u32, &err_text),
+                    );
+                } else {
+                    self.execution_diagnostics.remove(&uri);
+                }
                 apply_run_summary(
                     &self.execution_summaries,
                     &uri,
@@ -696,6 +737,22 @@ fn request_log_max_chars() -> Option<usize> {
         Some(0) => None,
         Some(v) => Some(v),
         None => Some(6000),
+    }
+}
+
+fn run_inline_failure_diagnostics_enabled() -> bool {
+    parse_inline_failure_diagnostics_enabled(
+        std::env::var("HURL_RUN_INLINE_FAILURE_DIAGNOSTICS").ok(),
+    )
+}
+
+fn parse_inline_failure_diagnostics_enabled(raw: Option<String>) -> bool {
+    match raw {
+        Some(value) => !matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "off" | "no"
+        ),
+        None => true,
     }
 }
 
@@ -773,5 +830,17 @@ mod tests {
         let text = "# header\n\nGET /health\nHTTP 200\n";
         let file_text = extract_file_text(text).expect("file text");
         assert_eq!(file_text, "GET /health\nHTTP 200");
+    }
+
+    #[test]
+    fn inline_failure_diagnostics_enabled_defaults_true() {
+        assert!(parse_inline_failure_diagnostics_enabled(None));
+    }
+
+    #[test]
+    fn inline_failure_diagnostics_enabled_parses_false_values() {
+        assert!(!parse_inline_failure_diagnostics_enabled(Some(
+            "false".to_string()
+        )));
     }
 }
