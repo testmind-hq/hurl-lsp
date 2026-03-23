@@ -211,6 +211,8 @@ brew install hurl-lsp
 Homebrew 公式位于：`packaging/homebrew/Formula/hurl-lsp.rb`  
 发布产物位于：<https://github.com/testmind-hq/hurl-lsp/releases>
 
+当仓库配置了 `HOMEBREW_TAP_TOKEN` Secret 时，release workflow 会在 `v*` tag release 场景自动把公式发布到 `testmind-hq/homebrew-tap`。
+
 ---
 
 ## 路线图（摘要）
@@ -239,7 +241,7 @@ Homebrew 公式位于：`packaging/homebrew/Formula/hurl-lsp.rb`
 
 - [~] VSCode Webview（单请求 + 依赖图基线）
 - [x] Markdown 导出（已支持分组/排序联动）
-- [~] Homebrew 分发（公式与校验和流程已就绪）
+- [x] Homebrew 分发（release 自动基于校验和更新 tap 公式）
 - [ ] Hurl 官方文档 PR
 - [ ] TestMind CI 结果回流
 
