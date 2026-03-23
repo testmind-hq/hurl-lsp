@@ -229,7 +229,7 @@ Homebrew formula source: `packaging/homebrew/Formula/hurl-lsp.rb`.
 
 Pre-built binaries for macOS (Intel + Apple Silicon), Linux, and Windows are available on the [Releases](https://github.com/testmind-hq/hurl-lsp/releases) page.
 
-Release workflow can now auto-publish Homebrew formula to `testmind-hq/homebrew-tap` when secret `HOMEBREW_TAP_TOKEN` is configured.
+Release workflow can auto-publish Homebrew formula to `testmind-hq/homebrew-tap` on `v*` tag releases when secret `HOMEBREW_TAP_TOKEN` is configured.
 
 ---
 

@@ -12,6 +12,12 @@ version="$1"
 sums_file="$2"
 formula_path="${3:-packaging/homebrew/Formula/hurl-lsp.rb}"
 
+if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z]+)*$ ]]; then
+  echo "Invalid version: ${version}"
+  echo "Expected semver-like value, for example: 0.1.6 or 0.1.6-rc1"
+  exit 1
+fi
+
 if [[ ! -f "${sums_file}" ]]; then
   echo "Missing checksum file: ${sums_file}"
   exit 1
