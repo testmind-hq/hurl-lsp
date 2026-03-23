@@ -114,6 +114,13 @@ The export follows outline preferences:
 - `hurl.outline.groupMode`: `hierarchical` | `flat`
 - `hurl.outline.sortMode`: `source` | `priority`
 
+### VSCode Webview Panel
+
+Command `Hurl: Open Webview Panel` opens a side tab panel with:
+
+- `Single Request` view: request details + `Run` / `Run Chain` actions
+- `Chain Graph` view: entry list + inferred/explicit dependency edges
+
 ### Document Outline
 
 The server exposes metadata-first document symbols with request-level fallback:
@@ -271,7 +278,7 @@ CI result feedback integration from TestMind is a future phase and is not implem
 
 ### Phase 4 — Ecosystem
 
-- [ ] VSCode Webview panel (single entry view + chain flow graph)
+- [~] VSCode Webview panel (single request + dependency graph baseline)
 - [x] Markdown export command (group/sort aware)
 - [~] Homebrew distribution (formula + checksum flow prepared)
 - [ ] Upstream PR to Hurl official docs (editor support page)

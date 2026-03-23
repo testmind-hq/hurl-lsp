@@ -4,6 +4,7 @@ import { Trace } from "vscode-jsonrpc";
 import { ensureBinary } from "./download";
 import { exportActiveHurlAsMarkdown } from "./markdownExport";
 import { HurlOutlineProvider } from "./outlineView";
+import { registerWebviewPanel } from "./webviewPanel";
 
 let client: LanguageClient | undefined;
 let runtimeLogChannel: vscode.OutputChannel | undefined;
@@ -33,6 +34,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     }),
   );
+  registerWebviewPanel(context, appendRuntimeLog);
   runtimeLogChannel = vscode.window.createOutputChannel("Hurl Runtime Log");
   requestLogChannel = vscode.window.createOutputChannel("Hurl Request Log");
   context.subscriptions.push(runtimeLogChannel);
