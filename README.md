@@ -229,6 +229,8 @@ Homebrew formula source: `packaging/homebrew/Formula/hurl-lsp.rb`.
 
 Pre-built binaries for macOS (Intel + Apple Silicon), Linux, and Windows are available on the [Releases](https://github.com/testmind-hq/hurl-lsp/releases) page.
 
+Release workflow can now auto-publish Homebrew formula to `testmind-hq/homebrew-tap` when secret `HOMEBREW_TAP_TOKEN` is configured.
+
 ---
 
 ## TestMind Integration _(planned)_
@@ -273,7 +275,7 @@ CI result feedback integration from TestMind is a future phase and is not implem
 
 - [ ] VSCode Webview panel (single entry view + chain flow graph)
 - [x] Markdown export command (group/sort aware)
-- [~] Homebrew distribution (formula + checksum flow prepared)
+- [x] Homebrew distribution (release workflow auto-updates tap formula with checksums)
 - [ ] Upstream PR to Hurl official docs (editor support page)
 - [ ] TestMind CI result feedback integration
 

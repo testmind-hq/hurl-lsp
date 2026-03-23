@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 2 ]]; then
-  echo "Usage: $0 <version> <sha256sums-file>"
+if [[ $# -lt 2 || $# -gt 3 ]]; then
+  echo "Usage: $0 <version> <sha256sums-file> [output-formula-path]"
   echo "Example: $0 0.1.6 ./SHA256SUMS"
+  echo "Example: $0 0.1.6 ./SHA256SUMS ./Formula/hurl-lsp.rb"
   exit 1
 fi
 
 version="$1"
 sums_file="$2"
-formula_path="packaging/homebrew/Formula/hurl-lsp.rb"
+formula_path="${3:-packaging/homebrew/Formula/hurl-lsp.rb}"
 
 if [[ ! -f "${sums_file}" ]]; then
   echo "Missing checksum file: ${sums_file}"
