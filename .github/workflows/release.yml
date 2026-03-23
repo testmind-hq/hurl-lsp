@@ -124,10 +124,14 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           bash scripts/update-homebrew-formula.sh "${version}" SHA256SUMS packaging/homebrew/Formula/hurl-lsp.rb
       - name: Publish Homebrew formula to tap repository
-        if: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.HOMEBREW_TAP_TOKEN != '' }}
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
+          if [ -z "${HOMEBREW_TAP_TOKEN}" ]; then
+            echo "HOMEBREW_TAP_TOKEN is not configured; skipped publishing formula to testmind-hq/homebrew-tap."
+            exit 0
+          fi
           version="${GITHUB_REF_NAME#v}"
           git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/testmind-hq/homebrew-tap.git" tap
           cp packaging/homebrew/Formula/hurl-lsp.rb tap/Formula/hurl-lsp.rb
@@ -141,7 +145,3 @@ jobs:
           fi
           git commit -m "hurl-lsp ${version}"
           git push origin HEAD
-      - name: Homebrew tap publish skipped
-        if: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.HOMEBREW_TAP_TOKEN == '' }}
-        run: |
-          echo "HOMEBREW_TAP_TOKEN is not configured; skipped publishing formula to testmind-hq/homebrew-tap."
