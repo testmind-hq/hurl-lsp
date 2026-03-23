@@ -22,6 +22,7 @@
     "onCommand:hurl.restartLanguageServer",
     "onCommand:hurl.showLog",
     "onCommand:hurl.showRequestLog",
+    "onCommand:hurl.openWebviewPanel",
     "onCommand:hurl.formatDocument",
     "onCommand:hurl.exportAsMarkdown",
     "onCommand:hurl.clearRunAlerts",
@@ -120,6 +121,10 @@
         "title": "Hurl: Show Request Log"
       },
       {
+        "command": "hurl.openWebviewPanel",
+        "title": "Hurl: Open Webview Panel"
+      },
+      {
         "command": "hurl.exportAsMarkdown",
         "title": "Hurl: Export as Markdown"
       },
@@ -168,6 +173,7 @@
   },
   "scripts": {
     "build": "tsc -p ./",
+    "test:webview": "npm run build && node --test test/*.test.cjs",
     "package": "vsce package"
   },
   "dependencies": {

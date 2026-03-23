@@ -109,6 +109,13 @@ English README: [`README.md`](README.md)
 - `hurl.outline.groupMode`: `hierarchical` | `flat`
 - `hurl.outline.sortMode`: `source` | `priority`
 
+### VSCode Webview 面板
+
+命令 `Hurl: Open Webview Panel` 可打开独立标签页，包含：
+
+- `Single Request`：单请求详情 + `Run` / `Run Chain` 动作
+- `Chain Graph`：请求列表与推断/显式依赖边
+
 ### 文档大纲（Document Symbol）
 
 支持优先展示元数据结构；若无元数据则回退到请求级符号。
@@ -230,7 +237,7 @@ Homebrew 公式位于：`packaging/homebrew/Formula/hurl-lsp.rb`
 
 ### Phase 4（生态）
 
-- [ ] VSCode Webview
+- [~] VSCode Webview（单请求 + 依赖图基线）
 - [x] Markdown 导出（已支持分组/排序联动）
 - [~] Homebrew 分发（公式与校验和流程已就绪）
 - [ ] Hurl 官方文档 PR
