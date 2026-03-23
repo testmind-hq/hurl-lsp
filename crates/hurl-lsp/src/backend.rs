@@ -18,6 +18,7 @@ use crate::{
     symbols::document_symbols,
     syntax::method_from_line,
     variables::{load_workspace_variables_with_roots, pick_variable_file_with_roots},
+    version::display_version,
 };
 use dashmap::DashMap;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -241,7 +242,7 @@ impl LanguageServer for Backend {
             },
             server_info: Some(ServerInfo {
                 name: "hurl-lsp".into(),
-                version: Some(env!("CARGO_PKG_VERSION").into()),
+                version: Some(display_version()),
             }),
         })
     }

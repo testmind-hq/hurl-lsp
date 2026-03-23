@@ -11,11 +11,13 @@ mod openapi;
 mod symbols;
 mod syntax;
 mod variables;
+mod version;
 
 use backend::Backend;
 use tower_lsp::{LspService, Server};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
+use version::display_version;
 
 struct Cli {
     show_help: bool,
@@ -66,7 +68,7 @@ fn parse_cli_args(args: &[String]) -> Cli {
 }
 
 fn print_help() {
-    println!("hurl-lsp {}", env!("CARGO_PKG_VERSION"));
+    println!("hurl-lsp {}", display_version());
     println!("Language Server Protocol implementation for Hurl");
     println!();
     println!("Usage:");
@@ -91,7 +93,7 @@ async fn main() {
         return;
     }
     if cli.show_version {
-        println!("hurl-lsp {}", env!("CARGO_PKG_VERSION"));
+        println!("hurl-lsp {}", display_version());
         return;
     }
 
