@@ -1,3 +1,11 @@
+id = "hurl-lsp"
+name = "Hurl LSP"
+version = "0.1.12"
+schema_version = 1
+authors = ["testmind-hq"]
+description = "Hurl language support and hurl-lsp integration for Zed"
+repository = "https://github.com/testmind-hq/hurl-lsp"
+
 [language]
 name = "Hurl"
 grammar = "hurl"
