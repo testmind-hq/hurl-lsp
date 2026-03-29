@@ -99,13 +99,36 @@ jobs:
         uses: actions/download-artifact@v5
         with:
           path: dist
+      - name: Setup Node for VSCode extension packaging
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - name: Build VSCode extension
+        working-directory: editors/vscode
+        run: |
+          npm ci
+          npm run build
+      - name: Package VSCode extension (.vsix)
+        working-directory: editors/vscode
+        run: npx @vscode/vsce package
+      - name: Stage VSCode extension asset
+        run: |
+          shopt -s nullglob
+          assets=(editors/vscode/*.vsix)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "No .vsix asset found to stage."
+            exit 1
+          fi
+          cp "${assets[@]}" dist/
       - name: Publish GitHub Release assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${GITHUB_REF_NAME}"
           gh release view "${tag}" >/dev/null 2>&1 || gh release create "${tag}" --title "${tag}" --notes ""
-          find dist -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print0 | xargs -0 gh release upload "${tag}" --clobber
+          find dist -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.vsix' \) -print0 | xargs -0 gh release upload "${tag}" --clobber
       - name: Publish checksums
         env:
           GH_TOKEN: ${{ github.token }}
@@ -113,7 +136,7 @@ jobs:
           tag="${GITHUB_REF_NAME}"
           (
             cd dist
-            find . -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print0 |
+            find . -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.vsix' \) -print0 |
               while IFS= read -r -d '' file; do
                 sha="$(sha256sum "${file}" | awk '{print $1}')"
                 name="$(basename "${file}")"
