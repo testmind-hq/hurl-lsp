@@ -31,10 +31,7 @@ const ASSERT_DOCS: &[(&str, &str)] = &[
         "certificate",
         "Assert against a TLS certificate attribute (e.g. Subject, Issuer, Expire-Date, Start-Date, Serial-Number, Subject-Alt-Name).",
     ),
-    (
-        "rawbytes",
-        "Assert against the raw response bytes.",
-    ),
+    ("rawbytes", "Assert against the raw response bytes."),
 ];
 
 const METHOD_DOCS: &[(&str, &str)] = &[
