@@ -2,7 +2,7 @@
   "name": "vscode-hurl",
   "displayName": "Hurl LSP",
   "description": "VSCode support for Hurl powered by hurl-lsp",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "publisher": "testmind-hq",
   "license": "MIT",
   "repository": {
