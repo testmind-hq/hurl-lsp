@@ -5,9 +5,16 @@ schema_version = 1
 authors = ["testmind-hq"]
 description = "Hurl language support and hurl-lsp integration for Zed"
 repository = "https://github.com/testmind-hq/hurl-lsp"
+languages = ["languages/hurl"]
 
-[language]
-name = "Hurl"
-grammar = "hurl"
-path_suffixes = ["hurl"]
-line_comment = "#"
+[lib]
+kind = "Rust"
+version = "0.7.0"
+
+[grammars.hurl]
+repository = "https://github.com/pfeiferj/tree-sitter-hurl"
+rev = "597efbd7ce9a814bb058f48eabd055b1d1e12145"
+
+[language_servers.hurl-lsp]
+language = "Hurl"
+languages = []
