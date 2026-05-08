@@ -309,6 +309,13 @@ mod tests {
     }
 
     #[test]
+    fn returns_certificate_and_rawbytes_completions_inside_asserts_block() {
+        let items = completions("[Asserts]\n", Position::new(1, 0));
+        assert!(items.iter().any(|item| item.label == "certificate"));
+        assert!(items.iter().any(|item| item.label == "rawbytes"));
+    }
+
+    #[test]
     fn returns_variable_completions_from_captures() {
         let text = "[Captures]\nuser_id: jsonpath \"$.id\"\n\nGET /users/{{u";
         let items = completions(text, Position::new(3, 13));

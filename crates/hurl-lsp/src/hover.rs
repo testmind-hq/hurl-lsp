@@ -29,7 +29,7 @@ const ASSERT_DOCS: &[(&str, &str)] = &[
     ),
     (
         "certificate",
-        "Assert against a TLS certificate attribute (e.g. Subject, Issuer, ExpireDate).",
+        "Assert against a TLS certificate attribute (e.g. Subject, Issuer, Expire-Date, Start-Date, Serial-Number, Subject-Alt-Name).",
     ),
     (
         "rawbytes",
@@ -117,6 +117,15 @@ mod tests {
     fn returns_hover_for_method() {
         let value = hover("GET https://example.com", Position::new(0, 1));
         assert!(value.is_some());
+    }
+
+    #[test]
+    fn returns_hover_for_certificate_and_rawbytes() {
+        let text = "[Asserts]\ncertificate \"Subject\" == \"example.com\"\nrawbytes == hex,ff;\n";
+        let cert = hover(text, Position::new(1, 2));
+        assert!(cert.is_some());
+        let raw = hover(text, Position::new(2, 2));
+        assert!(raw.is_some());
     }
 
     #[test]
