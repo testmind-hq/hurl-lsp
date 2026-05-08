@@ -32,3 +32,8 @@ editors/vscode/*.vsix
 
 # Local run/report artifacts
 hurl-report/
+
+# Zed extension compiled artifacts (built from source by Zed)
+editors/zed/extension.wasm
+editors/zed/grammars/*.wasm
+editors/zed/grammars/hurl/
