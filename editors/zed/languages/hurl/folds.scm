@@ -1,4 +1,4 @@
-; fold.scm
+; folds.scm
 
 (comment) @fold
 (entry) @fold

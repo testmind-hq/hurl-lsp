@@ -21,7 +21,7 @@
 (quoted_string) @string
 (json_string) @string
 (file_value) @string.special
-(regex) @string.regex
+(regex) @string.regexp
 
 "\\" @string.escape
 (regex_escaped_char) @string.escape
@@ -85,9 +85,9 @@
 
 
 (integer) @number
-(float) @float
+(float) @number.float
 (status) @number
-(json_number) @float
+(json_number) @number.float
 
 ":" @punctuation.delimiter
 "," @punctuation.delimiter
