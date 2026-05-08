@@ -12,6 +12,8 @@ const ASSERTS: &[(&str, &str)] = &[
     ("header", "header \"content-type\" == \"application/json\""),
     ("status", "status == 200"),
     ("duration", "duration < 1000"),
+    ("certificate", "certificate \"Subject\" == \"example.com\""),
+    ("rawbytes", "rawbytes == hex,deadbeef;"),
 ];
 const CONTENT_TYPES: &[&str] = &[
     "application/json",

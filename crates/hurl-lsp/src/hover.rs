@@ -15,7 +15,7 @@ const SECTION_DOCS: &[(&str, &str)] = &[
 const ASSERT_DOCS: &[(&str, &str)] = &[
     (
         "jsonpath",
-        "Evaluate a JSONPath expression against the response body.",
+        "Evaluate a JSONPath expression (RFC 9535) against the response body.",
     ),
     (
         "xpath",
@@ -26,6 +26,14 @@ const ASSERT_DOCS: &[(&str, &str)] = &[
     (
         "duration",
         "Assert against total request duration in milliseconds.",
+    ),
+    (
+        "certificate",
+        "Assert against a TLS certificate attribute (e.g. Subject, Issuer, ExpireDate).",
+    ),
+    (
+        "rawbytes",
+        "Assert against the raw response bytes.",
     ),
 ];
 
