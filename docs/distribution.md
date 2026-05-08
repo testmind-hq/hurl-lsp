@@ -47,18 +47,16 @@ Recommended next step:
 
 ## 5. Homebrew
 
-Formula path:
+Formula is maintained in [testmind-hq/homebrew-tap](https://github.com/testmind-hq/homebrew-tap) and updated automatically by the release workflow when `HOMEBREW_TAP_TOKEN` is configured.
 
-- `packaging/homebrew/Formula/hurl-lsp.rb`
-
-Update formula for a new tag:
+To update the formula manually for a new tag:
 
 1. Download `SHA256SUMS` from the release.
 2. Run:
 
 ```sh
-./scripts/update-homebrew-formula.sh <version> <path-to-SHA256SUMS>
+./scripts/update-homebrew-formula.sh <version> <path-to-SHA256SUMS> [output-path]
+# output-path is optional; defaults to /tmp/hurl-lsp.rb if omitted.
 ```
 
-3. Commit updated formula.
-4. Sync formula into `testmind-hq/homebrew-tap` repository.
+3. Copy the generated file to `Formula/hurl-lsp.rb` in `testmind-hq/homebrew-tap` and commit.

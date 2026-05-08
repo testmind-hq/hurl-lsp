@@ -208,10 +208,8 @@ brew tap testmind-hq/tap
 brew install hurl-lsp
 ```
 
-Homebrew 公式位于：`packaging/homebrew/Formula/hurl-lsp.rb`  
+Homebrew 公式维护在 [testmind-hq/homebrew-tap](https://github.com/testmind-hq/homebrew-tap)，每次发布时自动更新。  
 发布产物位于：<https://github.com/testmind-hq/hurl-lsp/releases>
-
-当仓库配置了 `HOMEBREW_TAP_TOKEN` Secret 时，release workflow 会在 `v*` tag release 场景自动把公式发布到 `testmind-hq/homebrew-tap`。
 
 ---
 
