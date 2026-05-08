@@ -10,7 +10,7 @@ fi
 
 version="$1"
 sums_file="$2"
-formula_path="${3:-packaging/homebrew/Formula/hurl-lsp.rb}"
+formula_path="${3:-/tmp/hurl-lsp.rb}"
 
 if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z]+)*$ ]]; then
   echo "Invalid version: ${version}"

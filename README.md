@@ -225,18 +225,16 @@ require('lspconfig').hurl_lsp.setup({
 cargo install hurl-lsp
 ```
 
-**Via Homebrew** _(tap-based, formula maintained in this repo)_:
+**Via Homebrew**:
 
 ```sh
 brew tap testmind-hq/tap
 brew install hurl-lsp
 ```
 
-Homebrew formula source: `packaging/homebrew/Formula/hurl-lsp.rb`.
+Homebrew formula is maintained in [testmind-hq/homebrew-tap](https://github.com/testmind-hq/homebrew-tap) and updated automatically on each release.
 
 Pre-built binaries for macOS (Intel + Apple Silicon), Linux, and Windows are available on the [Releases](https://github.com/testmind-hq/hurl-lsp/releases) page.
-
-Release workflow can auto-publish Homebrew formula to `testmind-hq/homebrew-tap` on `v*` tag releases when secret `HOMEBREW_TAP_TOKEN` is configured.
 
 ---
 
