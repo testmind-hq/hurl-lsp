@@ -153,10 +153,11 @@ jobs:
             exit 0
           fi
           version="${GITHUB_REF_NAME#v}"
-          bash scripts/update-homebrew-formula.sh "${version}" SHA256SUMS /tmp/hurl-lsp.rb
-          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/testmind-hq/homebrew-tap.git" tap
-          cp /tmp/hurl-lsp.rb tap/Formula/hurl-lsp.rb
-          cd tap
+          formula="${GITHUB_WORKSPACE}/hurl-lsp-formula.rb"
+          bash scripts/update-homebrew-formula.sh "${version}" SHA256SUMS "${formula}"
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/testmind-hq/homebrew-tap.git" "${RUNNER_TEMP}/tap"
+          cp "${formula}" "${RUNNER_TEMP}/tap/Formula/hurl-lsp.rb"
+          cd "${RUNNER_TEMP}/tap"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Formula/hurl-lsp.rb
@@ -164,5 +165,5 @@ jobs:
             echo "No Homebrew formula update required."
             exit 0
           fi
-          git commit -m "hurl-lsp ${version}"
+          git commit -m "chore: update hurl-lsp formula to ${version}"
           git push origin HEAD
