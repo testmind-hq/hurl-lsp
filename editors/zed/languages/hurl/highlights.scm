@@ -49,11 +49,16 @@
 "sha256" @function.builtin
 "md5" @function.builtin
 "bytes" @function.builtin
+"rawbytes" @function.builtin
+"certificate" @function.builtin
 "daysAfterNow" @function.builtin
 "daysBeforeNow" @function.builtin
 "htmlEscape" @function.builtin
 "htmlUnescape" @function.builtin
 "decode" @function.builtin
+"charsetDecode" @function.builtin
+"utf8Decode" @function.builtin
+"utf8Encode" @function.builtin
 "format" @function.builtin
 "nth" @function.builtin
 "replace" @function.builtin

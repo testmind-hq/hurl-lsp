@@ -15,7 +15,7 @@ const SECTION_DOCS: &[(&str, &str)] = &[
 const ASSERT_DOCS: &[(&str, &str)] = &[
     (
         "jsonpath",
-        "Evaluate a JSONPath expression against the response body.",
+        "Evaluate a JSONPath expression (RFC 9535) against the response body.",
     ),
     (
         "xpath",
@@ -27,6 +27,11 @@ const ASSERT_DOCS: &[(&str, &str)] = &[
         "duration",
         "Assert against total request duration in milliseconds.",
     ),
+    (
+        "certificate",
+        "Assert against a TLS certificate attribute (e.g. Subject, Issuer, Expire-Date, Start-Date, Serial-Number, Subject-Alt-Name).",
+    ),
+    ("rawbytes", "Assert against the raw response bytes."),
 ];
 
 const METHOD_DOCS: &[(&str, &str)] = &[
@@ -109,6 +114,15 @@ mod tests {
     fn returns_hover_for_method() {
         let value = hover("GET https://example.com", Position::new(0, 1));
         assert!(value.is_some());
+    }
+
+    #[test]
+    fn returns_hover_for_certificate_and_rawbytes() {
+        let text = "[Asserts]\ncertificate \"Subject\" == \"example.com\"\nrawbytes == hex,ff;\n";
+        let cert = hover(text, Position::new(1, 2));
+        assert!(cert.is_some());
+        let raw = hover(text, Position::new(2, 2));
+        assert!(raw.is_some());
     }
 
     #[test]

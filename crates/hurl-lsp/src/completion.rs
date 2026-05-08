@@ -12,6 +12,8 @@ const ASSERTS: &[(&str, &str)] = &[
     ("header", "header \"content-type\" == \"application/json\""),
     ("status", "status == 200"),
     ("duration", "duration < 1000"),
+    ("certificate", "certificate \"Subject\" == \"example.com\""),
+    ("rawbytes", "rawbytes == hex,deadbeef;"),
 ];
 const CONTENT_TYPES: &[&str] = &[
     "application/json",
@@ -304,6 +306,13 @@ mod tests {
     fn returns_assert_completions_inside_asserts_block() {
         let items = completions("[Asserts]\njs", Position::new(1, 2));
         assert!(items.iter().any(|item| item.label == "jsonpath"));
+    }
+
+    #[test]
+    fn returns_certificate_and_rawbytes_completions_inside_asserts_block() {
+        let items = completions("[Asserts]\n", Position::new(1, 0));
+        assert!(items.iter().any(|item| item.label == "certificate"));
+        assert!(items.iter().any(|item| item.label == "rawbytes"));
     }
 
     #[test]
