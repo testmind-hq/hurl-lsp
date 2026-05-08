@@ -55,7 +55,8 @@ To update the formula manually for a new tag:
 2. Run:
 
 ```sh
-./scripts/update-homebrew-formula.sh <version> <path-to-SHA256SUMS> <output-path>
+./scripts/update-homebrew-formula.sh <version> <path-to-SHA256SUMS> [output-path]
+# output-path is optional; defaults to /tmp/hurl-lsp.rb if omitted.
 ```
 
 3. Copy the generated file to `Formula/hurl-lsp.rb` in `testmind-hq/homebrew-tap` and commit.
