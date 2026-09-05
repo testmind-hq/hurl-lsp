@@ -11,22 +11,37 @@ export function registerWebviewPanel(context: vscode.ExtensionContext, log: (mes
   let panel: vscode.WebviewPanel | undefined;
   let cache: ParsedCache | undefined;
   let scheduled: ReturnType<typeof setTimeout> | undefined;
+  let boundDocument: { uri: string; version: number; entryLine?: number } | undefined;
   const store = new InspectorStore();
 
   const model = (): DocumentViewModel | undefined => {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor || (editor.document.languageId !== "hurl" && !editor.document.fileName.endsWith(".hurl"))) return undefined;
-    const doc = editor.document;
+    const active = vscode.window.activeTextEditor;
+    const doc = boundDocument
+      ? vscode.workspace.textDocuments.find((item) => item.uri.toString() === boundDocument?.uri && item.version === boundDocument.version)
+      : active?.document;
+    if (!doc || (doc.languageId !== "hurl" && !doc.fileName.endsWith(".hurl"))) return undefined;
     if (!cache || cache.uri !== doc.uri.toString() || cache.version !== doc.version) {
       const entries = parseEntries(doc.getText());
       cache = { uri: doc.uri.toString(), version: doc.version, fileName: doc.fileName.split(/[\\/]/).pop() ?? doc.fileName, entries, edges: inferEdges(entries) };
     }
-    return { ...cache, selectedIndex: cache.entries.length ? pickSelectedEntry(cache.entries, editor.selection.active.line) : -1 };
+    const activeLine = active?.document.uri.toString() === doc.uri.toString() ? active.selection.active.line : boundDocument?.entryLine ?? 0;
+    return { ...cache, selectedIndex: cache.entries.length ? pickSelectedEntry(cache.entries, activeLine) : -1 };
   };
-  const render = () => { if (panel) { const value = model(); panel.title = value ? `Hurl Inspector — ${value.fileName}` : "Hurl Inspector"; panel.webview.html = renderInspectorHtml(panel.webview, value, store.snapshot()); } };
+  const render = () => { if (panel) { const value = model(); const fallbackName = boundDocument ? vscode.Uri.parse(boundDocument.uri).path.split("/").pop() : undefined; panel.title = `Hurl Inspector${value?.fileName || fallbackName ? ` — ${value?.fileName ?? fallbackName}` : ""}`; panel.webview.html = renderInspectorHtml(panel.webview, value, store.snapshot()); } };
   const schedule = () => { if (!panel) return; if (scheduled) clearTimeout(scheduled); scheduled = setTimeout(() => { scheduled = undefined; render(); }, 50); };
 
-  const open = (tab?: InspectorTab) => {
+  const open = (tab?: InspectorTab, source?: { uri: string; version: number; entryLine?: number }) => {
+    if (source) {
+      boundDocument = source;
+      store.selectDocument(source.uri, source.version);
+      cache = undefined;
+    } else if (!boundDocument) {
+      const editor = vscode.window.activeTextEditor;
+      if (editor) {
+        boundDocument = { uri: editor.document.uri.toString(), version: editor.document.version, entryLine: editor.selection.active.line };
+        store.selectDocument(boundDocument.uri, boundDocument.version);
+      }
+    }
     if (tab) store.select(tab);
     if (panel) { panel.reveal(vscode.ViewColumn.Beside, true); render(); return; }
     panel = vscode.window.createWebviewPanel("hurlInspector", "Hurl Inspector", vscode.ViewColumn.Beside, { enableScripts: true, retainContextWhenHidden: true });
@@ -47,13 +62,24 @@ export function registerWebviewPanel(context: vscode.ExtensionContext, log: (mes
 
   const controller: InspectorController = {
     open,
-    acceptRun(result) { store.pushRun(result); open("result"); },
-    acceptCurl(result) { store.setCurl(result); open("curl"); },
+    acceptRun(result) { store.pushRun(result); open("result", { uri: result.uri, version: result.documentVersion, entryLine: result.entryLine }); },
+    acceptCurl(result) { store.setCurl(result); open("curl", { uri: result.uri, version: result.documentVersion, entryLine: result.entryLine }); },
     dispose() { panel?.dispose(); panel = undefined; },
   };
   context.subscriptions.push(
-    vscode.commands.registerCommand("hurl.openWebviewPanel", () => open()),
-    vscode.window.onDidChangeActiveTextEditor(() => { cache = undefined; schedule(); }),
+    vscode.commands.registerCommand("hurl.openWebviewPanel", () => {
+      const editor = vscode.window.activeTextEditor;
+      open("request", editor ? { uri: editor.document.uri.toString(), version: editor.document.version, entryLine: editor.selection.active.line } : undefined);
+    }),
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      const tab = store.snapshot().tab;
+      if (editor && (tab === "request" || tab === "chain")) {
+        boundDocument = { uri: editor.document.uri.toString(), version: editor.document.version, entryLine: editor.selection.active.line };
+        store.selectDocument(boundDocument.uri, boundDocument.version);
+      }
+      cache = undefined;
+      schedule();
+    }),
     vscode.workspace.onDidChangeTextDocument(() => { cache = undefined; schedule(); }),
     vscode.window.onDidChangeTextEditorSelection(schedule),
     { dispose: () => controller.dispose() },
