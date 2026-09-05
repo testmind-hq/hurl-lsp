@@ -93,6 +93,18 @@
           "default": true,
           "description": "Show inline red diagnostics when Run/Run Chain execution fails."
         },
+        "hurl.variables.inlayHints.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show resolved workspace variable values as inline hints. Sensitive values are masked."
+        },
+        "hurl.variables.inlayHints.maxLength": {
+          "type": "number",
+          "default": 60,
+          "minimum": 8,
+          "maximum": 500,
+          "description": "Maximum displayed length for resolved variable inlay hints."
+        },
         "hurl.outline.groupMode": {
           "type": "string",
           "enum": ["hierarchical", "flat"],

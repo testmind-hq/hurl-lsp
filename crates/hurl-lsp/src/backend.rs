@@ -10,6 +10,7 @@ use crate::{
     execution::{execution_diagnostics_for_entry_failure, parse_run_summary, RunSummary},
     formatting::format_document,
     hover::hover_with_external,
+    inlay_hints::variable_inlay_hints,
     metadata::{infer_entry_dependencies, HurlMetaParser},
     openapi::{
         load_openapi_paths_with_roots, load_openapi_request_body_fields_with_roots,
@@ -17,7 +18,10 @@ use crate::{
     },
     symbols::document_symbols,
     syntax::method_from_line,
-    variables::{load_workspace_variables_with_roots, pick_variable_file_with_roots},
+    variables::{
+        load_workspace_variables_with_roots, resolve_workspace_variables,
+        write_merged_variables_file,
+    },
     version::display_version,
 };
 use dashmap::DashMap;
@@ -220,6 +224,7 @@ impl LanguageServer for Backend {
                     ..Default::default()
                 }),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
+                inlay_hint_provider: Some(OneOf::Left(true)),
                 document_formatting_provider: Some(OneOf::Left(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
                 definition_provider: Some(OneOf::Left(true)),
@@ -288,6 +293,19 @@ impl LanguageServer for Backend {
             .await;
     }
 
+    async fn did_change_watched_files(&self, _params: DidChangeWatchedFilesParams) {
+        let documents: Vec<(Url, String)> = self
+            .documents
+            .docs
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect();
+        for (uri, text) in documents {
+            self.publish_diagnostics(uri, &text).await;
+        }
+        let _ = self.client.inlay_hint_refresh().await;
+    }
+
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         let uri = params.text_document_position.text_document.uri;
         let Some(text) = self.document_text(&uri) else {
@@ -318,12 +336,30 @@ impl LanguageServer for Backend {
         };
         let roots = self.workspace_roots().await;
         let external = load_workspace_variables_with_roots(&uri, &roots);
-        let external_map: BTreeMap<String, String> = external
+        let external_map = external
             .into_iter()
-            .map(|item| (item.name, item.value))
+            .map(|item| (item.name.clone(), item))
             .collect();
 
         Ok(hover_with_external(&text, position, &external_map))
+    }
+
+    async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
+        if !variable_inlay_hints_enabled() {
+            return Ok(None);
+        }
+        let uri = params.text_document.uri;
+        let Some(text) = self.document_text(&uri) else {
+            return Ok(None);
+        };
+        let roots = self.workspace_roots().await;
+        let external = resolve_workspace_variables(&uri, &roots);
+        Ok(Some(variable_inlay_hints(
+            &text,
+            params.range,
+            &external,
+            variable_inlay_hints_max_length(),
+        )))
     }
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
@@ -555,10 +591,29 @@ impl LanguageServer for Backend {
             cmd.arg("--verbose");
         }
         cmd.arg(&path);
+        let mut merged_vars_file = None;
         if params.command == RUN_ENTRY_WITH_VARS_COMMAND {
             let roots = self.workspace_roots().await;
-            if let Some(vars_file) = pick_variable_file_with_roots(&uri, &roots) {
-                cmd.arg("--variables-file").arg(vars_file);
+            let variables = resolve_workspace_variables(&uri, &roots);
+            let parent = uri
+                .to_file_path()
+                .ok()
+                .and_then(|path| path.parent().map(PathBuf::from));
+            if !variables.is_empty() {
+                match write_merged_variables_file(&variables, parent.as_deref()) {
+                    Ok(vars_file) => {
+                        cmd.arg("--variables-file").arg(vars_file.path());
+                        merged_vars_file = Some(vars_file);
+                    }
+                    Err(error) => {
+                        self.client
+                            .show_message(
+                                MessageType::WARNING,
+                                format!("Unable to prepare variables file: {error}"),
+                            )
+                            .await;
+                    }
+                }
             } else {
                 warn!("no variable file found for {}", uri);
                 self.client
@@ -588,6 +643,7 @@ impl LanguageServer for Backend {
         .await;
 
         let output = cmd.output().await;
+        drop(merged_vars_file);
         let request_log_limit = request_log_max_chars();
         match output {
             Ok(output) if output.status.success() => {
@@ -745,6 +801,25 @@ fn run_inline_failure_diagnostics_enabled() -> bool {
     parse_inline_failure_diagnostics_enabled(
         std::env::var("HURL_RUN_INLINE_FAILURE_DIAGNOSTICS").ok(),
     )
+}
+
+fn variable_inlay_hints_enabled() -> bool {
+    !matches!(
+        std::env::var("HURL_VARIABLE_INLAY_HINTS_ENABLED")
+            .unwrap_or_else(|_| "true".into())
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "0" | "false" | "off" | "no"
+    )
+}
+
+fn variable_inlay_hints_max_length() -> usize {
+    std::env::var("HURL_VARIABLE_INLAY_HINTS_MAX_LENGTH")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(60)
+        .clamp(8, 500)
 }
 
 fn parse_inline_failure_diagnostics_enabled(raw: Option<String>) -> bool {

@@ -6,6 +6,7 @@ mod diagnostics;
 mod execution;
 mod formatting;
 mod hover;
+mod inlay_hints;
 mod metadata;
 mod openapi;
 mod symbols;
