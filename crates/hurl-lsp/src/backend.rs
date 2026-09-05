@@ -1,13 +1,17 @@
 use crate::{
     code_lens::{
-        build_curl_for_entry, code_lenses_with_context, extract_entry_text,
-        CLEAR_RUN_DIAGNOSTICS_COMMAND, COPY_AS_CURL_COMMAND, NOOP_COMMAND, RUN_CHAIN_COMMAND,
-        RUN_ENTRY_COMMAND, RUN_ENTRY_WITH_VARS_COMMAND, RUN_FILE_COMMAND,
+        code_lenses_with_context, extract_entry_text, CLEAR_RUN_DIAGNOSTICS_COMMAND,
+        COPY_AS_CURL_COMMAND, NOOP_COMMAND, RUN_CHAIN_COMMAND, RUN_ENTRY_COMMAND,
+        RUN_ENTRY_WITH_VARS_COMMAND, RUN_FILE_COMMAND,
     },
     completion::completions_with_external,
+    curl::{build_curl_for_entry, CurlBuildError},
     definition::definition_with_external,
     diagnostics::collect_diagnostics_with_external,
-    execution::{execution_diagnostics_for_entry_failure, parse_run_summary, RunSummary},
+    execution::{
+        execution_diagnostics_for_entry_failure, parse_hurl_report_result, parse_run_summary,
+        RunResultContext, RunSummary, RunTarget,
+    },
     formatting::format_document,
     hover::hover_with_external,
     inlay_hints::variable_inlay_hints,
@@ -16,6 +20,7 @@ use crate::{
         load_openapi_paths_with_roots, load_openapi_request_body_fields_with_roots,
         load_openapi_response_fields_with_roots,
     },
+    protocol::{CurlResult, CurlResultNotification, RunResultNotification},
     symbols::document_symbols,
     syntax::method_from_line,
     variables::{
@@ -41,6 +46,7 @@ const REQUEST_LOG_PREFIX: &str = "[hurl-request] ";
 #[derive(Default)]
 pub struct DocumentStore {
     docs: DashMap<Url, String>,
+    versions: DashMap<Url, i32>,
 }
 
 impl DocumentStore {
@@ -48,12 +54,18 @@ impl DocumentStore {
         self.docs.get(uri).map(|entry| entry.clone())
     }
 
-    pub fn insert(&self, uri: Url, text: String) {
+    pub fn insert(&self, uri: Url, text: String, version: i32) {
+        self.versions.insert(uri.clone(), version);
         self.docs.insert(uri, text);
+    }
+
+    pub fn version(&self, uri: &Url) -> i32 {
+        self.versions.get(uri).map(|v| *v).unwrap_or(0)
     }
 
     pub fn remove(&self, uri: &Url) {
         self.docs.remove(uri);
+        self.versions.remove(uri);
     }
 }
 
@@ -118,10 +130,11 @@ fn apply_document_change(
     execution_summaries: &DashMap<Url, BTreeMap<u32, RunSummary>>,
     uri: Url,
     text: String,
+    version: i32,
 ) {
     execution_diagnostics.remove(&uri);
     execution_summaries.remove(&uri);
-    documents.insert(uri, text);
+    documents.insert(uri, text, version);
 }
 
 fn apply_run_summary(
@@ -266,7 +279,8 @@ impl LanguageServer for Backend {
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let uri = params.text_document.uri;
         let text = params.text_document.text;
-        self.documents.insert(uri.clone(), text.clone());
+        self.documents
+            .insert(uri.clone(), text.clone(), params.text_document.version);
         self.publish_diagnostics(uri, &text).await;
     }
 
@@ -279,6 +293,7 @@ impl LanguageServer for Backend {
                 &self.execution_summaries,
                 uri.clone(),
                 change.text.clone(),
+                params.text_document.version,
             );
             self.publish_diagnostics(uri, &change.text).await;
         }
@@ -501,19 +516,46 @@ impl LanguageServer for Backend {
             let Some(text) = self.document_text(&uri) else {
                 return Ok(None);
             };
-            let Some(curl) = build_curl_for_entry(&text, line) else {
-                self.client
-                    .show_message(MessageType::WARNING, "Unable to build curl for this entry.")
-                    .await;
-                return Ok(None);
+            let roots = self.workspace_roots().await;
+            let vars = resolve_workspace_variables(&uri, &roots);
+            let version = self.documents.version(&uri);
+            let result = match build_curl_for_entry(&text, line, &vars) {
+                Ok(curl) => CurlResult {
+                    uri: uri.to_string(),
+                    document_version: version,
+                    entry_line: line as u32,
+                    ok: true,
+                    command: Some(curl.command.clone()),
+                    display_command: Some(curl.display_command),
+                    unresolved_variables: vec![],
+                    error: None,
+                },
+                Err(CurlBuildError::UnresolvedVariables(names)) => CurlResult {
+                    uri: uri.to_string(),
+                    document_version: version,
+                    entry_line: line as u32,
+                    ok: false,
+                    command: None,
+                    display_command: None,
+                    unresolved_variables: names,
+                    error: Some("Resolve all variables before copying cURL.".into()),
+                },
+                Err(error) => CurlResult {
+                    uri: uri.to_string(),
+                    document_version: version,
+                    entry_line: line as u32,
+                    ok: false,
+                    command: None,
+                    display_command: None,
+                    unresolved_variables: vec![],
+                    error: Some(format!("{error:?}")),
+                },
             };
+            let return_value = result.command.clone().map(serde_json::Value::String);
             self.client
-                .show_message(
-                    MessageType::INFO,
-                    format!("Copy as curl (manual copy):\n{curl}"),
-                )
+                .send_notification::<CurlResultNotification>(result)
                 .await;
-            return Ok(Some(serde_json::Value::String(curl)));
+            return Ok(return_value);
         }
 
         let Some(text) = self.document_text(&uri) else {
@@ -525,6 +567,11 @@ impl LanguageServer for Backend {
             "chain"
         } else {
             "entry"
+        };
+        let run_target_kind = match run_target {
+            "file" => RunTarget::File,
+            "chain" => RunTarget::Chain,
+            _ => RunTarget::Entry,
         };
         let entry_text = if params.command == RUN_FILE_COMMAND {
             let Some(value) = extract_file_text(&text) else {
@@ -591,6 +638,22 @@ impl LanguageServer for Backend {
             cmd.arg("--verbose");
         }
         cmd.arg(&path);
+        let report_dir = match tempfile::tempdir() {
+            Ok(dir) => dir,
+            Err(error) => {
+                self.client
+                    .show_message(
+                        MessageType::ERROR,
+                        format!("Failed to prepare Hurl report: {error}"),
+                    )
+                    .await;
+                return Ok(None);
+            }
+        };
+        cmd.arg("--report-json")
+            .arg(report_dir.path())
+            .arg("--no-color")
+            .arg("--no-pretty");
         let mut merged_vars_file = None;
         if params.command == RUN_ENTRY_WITH_VARS_COMMAND {
             let roots = self.workspace_roots().await;
@@ -656,11 +719,6 @@ impl LanguageServer for Backend {
                     line as u32,
                     parse_run_summary(stderr.as_ref(), stdout.as_ref(), true),
                 );
-                let message = if stdout.trim().is_empty() {
-                    "hurl run succeeded for selected entry.".to_string()
-                } else {
-                    format!("hurl run succeeded:\n{}", truncate_message(stdout.as_ref()))
-                };
                 if !stdout.trim().is_empty() {
                     self.log_request(format!(
                         "stdout:\n{}",
@@ -677,7 +735,22 @@ impl LanguageServer for Backend {
                 }
                 self.log_execution(format!("hurl run succeeded ({run_target}) for {}", uri))
                     .await;
-                self.client.show_message(MessageType::INFO, message).await;
+                let result = parse_hurl_report_result(
+                    RunResultContext {
+                        uri: &uri,
+                        document_version: self.documents.version(&uri),
+                        entry_line: line as u32,
+                        target: run_target_kind,
+                        success: true,
+                        exit_code: output.status.code(),
+                    },
+                    report_dir.path(),
+                    &output.stdout,
+                    &output.stderr,
+                );
+                self.client
+                    .send_notification::<RunResultNotification>(result)
+                    .await;
                 self.publish_diagnostics(uri, &text).await;
             }
             Ok(output) => {
@@ -722,6 +795,22 @@ impl LanguageServer for Backend {
                     uri, detail
                 ))
                 .await;
+                let result = parse_hurl_report_result(
+                    RunResultContext {
+                        uri: &uri,
+                        document_version: self.documents.version(&uri),
+                        entry_line: line as u32,
+                        target: run_target_kind,
+                        success: false,
+                        exit_code: output.status.code(),
+                    },
+                    report_dir.path(),
+                    &output.stdout,
+                    &output.stderr,
+                );
+                self.client
+                    .send_notification::<RunResultNotification>(result)
+                    .await;
                 self.client
                     .show_message(MessageType::ERROR, format!("hurl run failed: {detail}"))
                     .await;
@@ -757,6 +846,22 @@ impl LanguageServer for Backend {
                     uri, error
                 ))
                 .await;
+                let result = parse_hurl_report_result(
+                    RunResultContext {
+                        uri: &uri,
+                        document_version: self.documents.version(&uri),
+                        entry_line: line as u32,
+                        target: run_target_kind,
+                        success: false,
+                        exit_code: None,
+                    },
+                    report_dir.path(),
+                    b"",
+                    err_text.as_bytes(),
+                );
+                self.client
+                    .send_notification::<RunResultNotification>(result)
+                    .await;
                 self.client
                     .show_message(
                         MessageType::ERROR,
@@ -886,11 +991,13 @@ mod tests {
             &execution_summaries,
             uri.clone(),
             "GET /health".to_string(),
+            3,
         );
 
         assert!(execution_diagnostics.get(&uri).is_none());
         assert!(execution_summaries.get(&uri).is_none());
         assert_eq!(documents.get(&uri).as_deref(), Some("GET /health"));
+        assert_eq!(documents.version(&uri), 3);
     }
 
     #[test]

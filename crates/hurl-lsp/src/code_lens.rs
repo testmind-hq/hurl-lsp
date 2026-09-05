@@ -190,46 +190,6 @@ fn count_sections_after_entry(text: &str, entry_line: usize) -> (usize, usize, u
     (headers, asserts, captures)
 }
 
-pub fn build_curl_for_entry(text: &str, entry_line: usize) -> Option<String> {
-    let parsed = parse_document(text);
-    let entry = parsed
-        .entries
-        .iter()
-        .find(|item| item.line as usize == entry_line)?;
-
-    let mut headers = Vec::new();
-    let mut in_headers = false;
-    for (idx, raw) in text.lines().enumerate() {
-        if idx <= entry_line {
-            continue;
-        }
-        let line = raw.trim();
-        if crate::syntax::method_from_line(line).is_some() {
-            break;
-        }
-        if let Some(section) = crate::syntax::section_name_from_line(line) {
-            in_headers = section == "Headers";
-            continue;
-        }
-        if !in_headers || line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some((k, v)) = line.split_once(':') {
-            headers.push(format!("{}: {}", k.trim(), v.trim()));
-        }
-    }
-
-    let mut command = format!(
-        "curl -X {} '{}'",
-        entry.method,
-        shell_single_quote(&entry.path)
-    );
-    for header in headers {
-        command.push_str(&format!(" -H '{}'", shell_single_quote(&header)));
-    }
-    Some(command)
-}
-
 pub fn extract_entry_text(text: &str, entry_line: usize) -> Option<String> {
     let parsed = parse_document(text);
     let mut entry_lines: Vec<usize> = parsed
@@ -249,10 +209,6 @@ pub fn extract_entry_text(text: &str, entry_line: usize) -> Option<String> {
         .unwrap_or_else(|| text.lines().count());
     let lines: Vec<&str> = text.lines().collect();
     Some(lines[start..end].join("\n"))
-}
-
-fn shell_single_quote(value: &str) -> String {
-    value.replace('\'', "'\"'\"'")
 }
 
 fn format_run_status_suffix(summary: &RunSummary) -> String {
@@ -381,14 +337,6 @@ mod tests {
             .expect("summary")
             .title
             .contains("❌ 上次执行失败 (1 assert failed · 230ms)"));
-    }
-
-    #[test]
-    fn builds_curl_from_entry_line_and_headers() {
-        let text = "POST https://example.com/users\nHTTP 201\n[Headers]\nContent-Type: application/json\nAuthorization: Bearer xxx\n";
-        let curl = build_curl_for_entry(text, 0).expect("curl");
-        assert!(curl.contains("curl -X POST"));
-        assert!(curl.contains("-H 'Content-Type: application/json'"));
     }
 
     #[test]

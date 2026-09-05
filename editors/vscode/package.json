@@ -134,7 +134,7 @@
       },
       {
         "command": "hurl.openWebviewPanel",
-        "title": "Hurl: Open Webview Panel"
+        "title": "Hurl: Open Inspector"
       },
       {
         "command": "hurl.exportAsMarkdown",

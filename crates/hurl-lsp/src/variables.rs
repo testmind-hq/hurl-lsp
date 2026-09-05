@@ -91,23 +91,6 @@ pub fn is_sensitive_name(name: &str) -> bool {
     .any(|marker| name.contains(marker))
 }
 
-pub fn pick_variable_file_with_roots(
-    document_uri: &Url,
-    workspace_roots: &[PathBuf],
-) -> Option<PathBuf> {
-    let base_dir = base_dir_from_uri(document_uri)?;
-    let dirs = bounded_ancestor_dirs(base_dir, workspace_roots);
-    for dir in dirs {
-        for file_name in VARIABLE_FILES {
-            let file_path = dir.join(file_name);
-            if file_path.exists() && file_path.is_file() {
-                return Some(file_path);
-            }
-        }
-    }
-    None
-}
-
 fn file_path_from_uri(uri: &Url) -> Option<PathBuf> {
     if uri.scheme() != "file" {
         return None;
@@ -240,29 +223,6 @@ mod tests {
         let vars = load_workspace_variables_with_roots(&uri, std::slice::from_ref(&base));
         let host = vars.iter().find(|var| var.name == "host").expect("host");
         assert_eq!(host.value, "local.example.com");
-
-        let _ = fs::remove_dir_all(base);
-    }
-
-    #[test]
-    fn picks_nearest_variable_file() {
-        let base = tmp_dir("hurl-lsp-vars-pick");
-        let nested = base.join("project").join("api");
-        fs::create_dir_all(&nested).expect("mkdir");
-        fs::write(base.join(".env"), "host=root.example.com\n").expect("write root");
-        fs::write(
-            base.join("project").join("vars.env"),
-            "host=project.example.com\n",
-        )
-        .expect("write project");
-        let uri = Url::from_file_path(nested.join("case.hurl")).expect("uri");
-
-        let picked =
-            pick_variable_file_with_roots(&uri, std::slice::from_ref(&base)).expect("picked");
-        assert_eq!(
-            picked.file_name().and_then(|n| n.to_str()),
-            Some("vars.env")
-        );
 
         let _ = fs::remove_dir_all(base);
     }

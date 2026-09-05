@@ -1,4 +1,4 @@
-use crate::syntax::variable_placeholders;
+use crate::syntax::{variable_placeholders, visible_variables_before_line};
 use crate::variables::ResolvedVariable;
 use std::collections::BTreeMap;
 use tower_lsp::lsp_types::{Hover, HoverContents, MarkedString, Position};
@@ -79,6 +79,15 @@ pub fn hover_with_external(
                         shown,
                         source,
                         value.line + 1
+                    ))),
+                    range: None,
+                });
+            }
+            if visible_variables_before_line(text, position.line as usize).contains(variable) {
+                return Some(Hover {
+                    contents: HoverContents::Scalar(MarkedString::String(format!(
+                        "**{}**\n\nAvailable only at runtime.",
+                        variable
                     ))),
                     range: None,
                 });

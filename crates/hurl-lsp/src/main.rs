@@ -1,6 +1,7 @@
 mod backend;
 mod code_lens;
 mod completion;
+mod curl;
 mod definition;
 mod diagnostics;
 mod execution;
@@ -9,6 +10,7 @@ mod hover;
 mod inlay_hints;
 mod metadata;
 mod openapi;
+mod protocol;
 mod symbols;
 mod syntax;
 mod variables;
