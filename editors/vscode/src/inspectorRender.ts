@@ -24,9 +24,12 @@ function headers(items: HeaderField[], reveal: boolean): string {
   return `<table>${items.map((h) => `<tr><th>${escapeHtml(h.name)}</th><td>${escapeHtml(h.sensitive && !reveal ? "••••••" : h.value)}</td></tr>`).join("")}</table>`;
 }
 
-function exchange(value: HttpExchange, reveal: boolean): string {
+function exchange(value: HttpExchange, reveal: boolean, index: number): string {
   const response = value.response;
-  return `<div class="grid"><section class="card"><h3>Request</h3><div class="headline">${escapeHtml(value.request.method)} ${escapeHtml(value.request.url)}</div>${headers(value.request.headers, reveal)}<pre>${escapeHtml(formatBody(value.request.body))}</pre></section><section class="card"><h3>Response</h3>${response ? `<div class="headline">${escapeHtml(response.version ?? "HTTP")} ${escapeHtml(response.status ?? "")}</div>${headers(response.headers, reveal)}<pre>${escapeHtml(formatBody(response.body))}</pre>` : '<div class="muted">No HTTP response</div>'}</section></div>`;
+  const copyButton = response?.body?.encoding === "utf8" && response.body.text !== undefined
+    ? `<button data-type="copy-response" data-exchange="${index}">Copy response body</button>`
+    : "";
+  return `<div class="grid"><section class="card"><h3>Request</h3><div class="headline">${escapeHtml(value.request.method)} ${escapeHtml(value.request.url)}</div>${headers(value.request.headers, reveal)}<pre>${escapeHtml(formatBody(value.request.body))}</pre></section><section class="card"><div class="section-title"><h3>Response</h3>${copyButton}</div>${response ? `<div class="headline">${escapeHtml(response.version ?? "HTTP")} ${escapeHtml(response.status ?? "")}</div>${headers(response.headers, reveal)}<pre>${escapeHtml(formatBody(response.body))}</pre>` : '<div class="muted">No HTTP response</div>'}</section></div>`;
 }
 
 function resultView(result: RunResult | undefined, snapshot: InspectorSnapshot): string {
@@ -35,7 +38,7 @@ function resultView(result: RunResult | undefined, snapshot: InspectorSnapshot):
   const badge = result.success ? '<span class="ok">Passed</span>' : '<span class="fail">Failed</span>';
   const assertions = result.failedAssertions.length ? `<section class="card"><h3>Failed assertions</h3><ul>${result.failedAssertions.map((a) => `<li>${escapeHtml(a.message)}${a.line === undefined ? "" : ` — line ${a.line + 1}`}</li>`).join("")}</ul></section>` : "";
   const history = snapshot.runs.length > 1 ? `<select data-type="select-run">${snapshot.runs.map((run, index) => `<option value="${index}" ${index === snapshot.selectedRun ? "selected" : ""}>${escapeHtml(`${run.success ? "✓" : "✗"} line ${run.entryLine + 1} · ${run.durationMs ?? "?"}ms · ${run.startedAt}`)}</option>`).join("")}</select>` : "";
-  return `<div class="toolbar">${badge}<span>${escapeHtml(result.durationMs ?? "?")} ms</span>${history}<button data-type="toggle-secrets">${reveal ? "Hide secrets" : "Reveal secrets"}</button></div>${result.parseWarning ? `<div class="warning">${escapeHtml(result.parseWarning)}</div>` : ""}${result.exchanges.map((item) => exchange(item, reveal)).join("")}${assertions}<section class="card"><h3>Raw stdout</h3><pre>${escapeHtml(result.stdout || "(empty)")}</pre><h3>Raw stderr</h3><pre>${escapeHtml(result.stderr || "(empty)")}</pre></section>`;
+  return `<div class="toolbar">${badge}<span>${escapeHtml(result.durationMs ?? "?")} ms</span>${history}<button data-type="toggle-secrets">${reveal ? "Hide secrets" : "Reveal secrets"}</button></div>${result.parseWarning ? `<div class="warning">${escapeHtml(result.parseWarning)}</div>` : ""}${result.exchanges.map((item, index) => exchange(item, reveal, index)).join("")}${assertions}<section class="card"><h3>Raw stdout</h3><pre>${escapeHtml(result.stdout || "(empty)")}</pre><h3>Raw stderr</h3><pre>${escapeHtml(result.stderr || "(empty)")}</pre></section>`;
 }
 
 function requestView(model: DocumentViewModel | undefined): string {

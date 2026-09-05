@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { InspectorStore, InspectorTab } from "./inspectorStore";
-import { DocumentViewModel, renderInspectorHtml } from "./inspectorRender";
+import { DocumentViewModel, formatBody, renderInspectorHtml } from "./inspectorRender";
 import { CurlResult, RunResult } from "./protocol";
 import { Edge, Entry, inferEdges, parseEntries, pickSelectedEntry } from "./webviewModel";
 
@@ -51,6 +51,16 @@ export function registerWebviewPanel(context: vscode.ExtensionContext, log: (mes
       if (message.type === "toggle-secrets") { store.toggleSecrets(); render(); return; }
       if (message.type === "select-run") { store.selectRun(Number(message.index)); render(); return; }
       if (message.type === "copy-curl") { const command = store.snapshot().curl?.command; if (command) { await vscode.env.clipboard.writeText(command); void vscode.window.showInformationMessage("cURL copied to clipboard"); } return; }
+      if (message.type === "copy-response") {
+        const snapshot = store.snapshot();
+        const exchange = snapshot.runs[snapshot.selectedRun]?.exchanges[Number(message.exchange)];
+        const body = exchange?.response?.body;
+        if (body?.encoding === "utf8" && body.text !== undefined) {
+          await vscode.env.clipboard.writeText(formatBody(body));
+          void vscode.window.showInformationMessage("Response body copied to clipboard");
+        }
+        return;
+      }
       const line = Number(message.line);
       if (!message.uri || Number.isNaN(line)) return;
       const commands: Record<string, string> = { "run-entry": "hurl.runEntry", "run-vars": "hurl.runEntryWithVars", "run-chain": "hurl.runChain", "copy-curl-command": "hurl.copyAsCurl" };

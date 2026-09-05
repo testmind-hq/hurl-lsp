@@ -230,7 +230,7 @@ fn render(parts: &RequestParts, mask: bool) -> String {
             args.extend(["--data-raw".into(), quote(&masked(body, parts, mask))]);
         }
     }
-    args.join(" \\\n+  ")
+    args.join(" \\\n  ")
 }
 
 fn masked(value: &str, parts: &RequestParts, mask: bool) -> String {
@@ -281,6 +281,12 @@ mod tests {
         assert!(curl.command.contains("X-Account-Email: user@example.com"));
         assert!(curl.command.contains("O'\"'\"'Brien"));
         assert!(!curl.display_command.contains("real-token"));
+        assert!(!curl.command.lines().any(|line| line.starts_with('+')));
+        assert!(curl
+            .command
+            .lines()
+            .skip(1)
+            .all(|line| line.starts_with("  ")));
     }
 
     #[test]
