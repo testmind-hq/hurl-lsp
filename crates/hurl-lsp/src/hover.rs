@@ -1,4 +1,5 @@
-use crate::syntax::variable_placeholders;
+use crate::syntax::{variable_placeholders, visible_variables_before_line};
+use crate::variables::ResolvedVariable;
 use std::collections::BTreeMap;
 use tower_lsp::lsp_types::{Hover, HoverContents, MarkedString, Position};
 
@@ -50,17 +51,43 @@ pub fn hover(text: &str, position: Position) -> Option<Hover> {
 pub fn hover_with_external(
     text: &str,
     position: Position,
-    external_variables: &BTreeMap<String, String>,
+    external_variables: &BTreeMap<String, ResolvedVariable>,
 ) -> Option<Hover> {
     let line = text.lines().nth(position.line as usize)?;
     let ch = position.character as usize;
     for (start, end, variable) in variable_placeholders(line) {
         if ch >= start && ch <= end {
             if let Some(value) = external_variables.get(variable) {
+                let source = value
+                    .uri
+                    .to_file_path()
+                    .ok()
+                    .and_then(|path| {
+                        path.file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                    })
+                    .unwrap_or_else(|| value.uri.to_string());
+                let shown = if value.sensitive {
+                    "••••••"
+                } else {
+                    &value.value
+                };
                 return Some(Hover {
                     contents: HoverContents::Scalar(MarkedString::String(format!(
-                        "**{}**\n\n`{}`",
-                        variable, value
+                        "**{}**\n\n`{}`\n\nSource: `{}:{}`",
+                        variable,
+                        shown,
+                        source,
+                        value.line + 1
+                    ))),
+                    range: None,
+                });
+            }
+            if visible_variables_before_line(text, position.line as usize).contains(variable) {
+                return Some(Hover {
+                    contents: HoverContents::Scalar(MarkedString::String(format!(
+                        "**{}**\n\nAvailable only at runtime.",
+                        variable
                     ))),
                     range: None,
                 });
@@ -128,8 +155,40 @@ mod tests {
     #[test]
     fn returns_hover_for_external_variable_value() {
         let mut vars = BTreeMap::new();
-        vars.insert("host".to_string(), "example.com".to_string());
+        vars.insert(
+            "host".to_string(),
+            ResolvedVariable {
+                name: "host".into(),
+                value: "example.com".into(),
+                uri: tower_lsp::lsp_types::Url::parse("file:///tmp/vars.env").expect("uri"),
+                line: 1,
+                start: 0,
+                end: 4,
+                sensitive: false,
+            },
+        );
         let value = hover_with_external("GET https://{{host}}/users", Position::new(0, 16), &vars);
         assert!(value.is_some());
+    }
+
+    #[test]
+    fn masks_sensitive_external_variable_value() {
+        let vars = BTreeMap::from([(
+            "api_token".to_string(),
+            ResolvedVariable {
+                name: "api_token".into(),
+                value: "real-secret".into(),
+                uri: tower_lsp::lsp_types::Url::parse("file:///tmp/vars.env").expect("uri"),
+                line: 0,
+                start: 0,
+                end: 9,
+                sensitive: true,
+            },
+        )]);
+        let value =
+            hover_with_external("GET /{{api_token}}", Position::new(0, 9), &vars).expect("hover");
+        let text = format!("{:?}", value.contents);
+        assert!(text.contains("••••••"));
+        assert!(!text.contains("real-secret"));
     }
 }

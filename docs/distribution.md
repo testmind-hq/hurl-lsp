@@ -23,18 +23,44 @@ Release steps:
 1. Run workflow with `dry_run=true` and ensure it passes.
 2. Run workflow with `dry_run=false` to publish `hurl-lsp`.
 
-## 3. VSCode Marketplace
+## 3. VS Code Marketplace and Open VSX
 
 Workflow: `.github/workflows/publish-vscode.yml`
 
-Required secret:
+The vsix is built from `editors/vscode/`. Listing copy uses `editors/vscode/README.md`; keep that file in sync with extension features. `LICENSE` must sit next to `package.json` or `vsce` warns.
+
+One vsix is published to both:
+
+- Visual Studio Marketplace (VS Code)
+- [Open VSX](https://open-vsx.org) (VSCodium and other Open VSX clients)
+
+Required secrets:
 
 - `VSCE_PAT`
+- `OVSX_PAT`
 
 Release steps:
 
 1. Run workflow with `dry_run=true` to produce a `.vsix`.
-2. Run workflow with `dry_run=false` to publish.
+2. Run workflow with `dry_run=false` to publish both registries.
+
+### One-time Open VSX setup
+
+Namespace must match `package.json` `publisher`: `testmind-hq`.
+
+1. Sign in at [open-vsx.org](https://open-vsx.org) with GitHub.
+2. Open [Access Tokens](https://open-vsx.org/user-settings/tokens) and create a token.
+3. Create the namespace (once):
+
+```sh
+cd editors/vscode
+npx ovsx create-namespace testmind-hq -p <token>
+```
+
+4. Add the token as repo secret `OVSX_PAT`.
+5. Optional: [claim namespace ownership](https://github.com/EclipseFdn/open-vsx.org/wiki/Managing-Namespaces) so the listing shows as verified. GitHub account used for the claim needs at least one year of history.
+
+The first `dry_run=false` run publishes `testmind-hq.vscode-hurl` to `https://open-vsx.org/extension/testmind-hq/vscode-hurl`. `--skip-duplicate` keeps re-runs from failing if that version is already there.
 
 ## 4. Zed Extensions
 

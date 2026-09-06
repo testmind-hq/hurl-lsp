@@ -125,6 +125,7 @@ mod tests {
             line: 0,
             start: 0,
             end: 4,
+            sensitive: false,
         }];
 
         let result =

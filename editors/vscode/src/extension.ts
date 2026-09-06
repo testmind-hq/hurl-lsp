@@ -4,17 +4,32 @@ import { Trace } from "vscode-jsonrpc";
 import { ensureBinary } from "./download";
 import { exportActiveHurlAsMarkdown } from "./markdownExport";
 import { HurlOutlineProvider } from "./outlineView";
-import { registerWebviewPanel } from "./webviewPanel";
+import { InspectorController, registerWebviewPanel } from "./webviewPanel";
+import { isCurlResult, isRunResult } from "./protocol";
 
 let client: LanguageClient | undefined;
 let runtimeLogChannel: vscode.OutputChannel | undefined;
 let requestLogChannel: vscode.OutputChannel | undefined;
 let logNotificationDisposable: vscode.Disposable | undefined;
+let resultNotificationDisposables: vscode.Disposable[] = [];
+let inspector: InspectorController | undefined;
 const REQUEST_LOG_PREFIX = "[hurl-request] ";
 let requestRuns: string[] = [];
 let activeRunIndex = -1;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  const variableWatcher = vscode.workspace.createFileSystemWatcher("**/{.hurl-vars,vars.env,hurl.env,.env}");
+  const notifyVariableFileChange = (uri: vscode.Uri, type: vscode.FileChangeType) => {
+    void client?.sendNotification("workspace/didChangeWatchedFiles", {
+      changes: [{ uri: uri.toString(), type }],
+    });
+  };
+  context.subscriptions.push(
+    variableWatcher,
+    variableWatcher.onDidCreate((uri) => notifyVariableFileChange(uri, vscode.FileChangeType.Created)),
+    variableWatcher.onDidChange((uri) => notifyVariableFileChange(uri, vscode.FileChangeType.Changed)),
+    variableWatcher.onDidDelete((uri) => notifyVariableFileChange(uri, vscode.FileChangeType.Deleted)),
+  );
   const outlineProvider = new HurlOutlineProvider();
   const outlineView = vscode.window.createTreeView("hurlRequests", {
     treeDataProvider: outlineProvider,
@@ -34,7 +49,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     }),
   );
-  registerWebviewPanel(context, appendRuntimeLog);
+  inspector = registerWebviewPanel(context, appendRuntimeLog);
   runtimeLogChannel = vscode.window.createOutputChannel("Hurl Runtime Log");
   requestLogChannel = vscode.window.createOutputChannel("Hurl Request Log");
   context.subscriptions.push(runtimeLogChannel);
@@ -111,7 +126,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (
         event.affectsConfiguration("hurl.outline.groupMode") ||
         event.affectsConfiguration("hurl.outline.sortMode") ||
-        event.affectsConfiguration("hurl.run.inlineFailureDiagnostics")
+        event.affectsConfiguration("hurl.run.inlineFailureDiagnostics") ||
+        event.affectsConfiguration("hurl.variables.inlayHints.enabled") ||
+        event.affectsConfiguration("hurl.variables.inlayHints.maxLength")
       ) {
         void (async () => {
           await restart(context);
@@ -129,6 +146,8 @@ export async function deactivate(): Promise<void> {
     logNotificationDisposable.dispose();
     logNotificationDisposable = undefined;
   }
+  resultNotificationDisposables.forEach((item) => item.dispose());
+  resultNotificationDisposables = [];
   if (client) {
     await client.stop();
     client = undefined;
@@ -172,6 +191,10 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
     .get<boolean>("run.inlineFailureDiagnostics", true);
   const outlineGroupMode = vscode.workspace.getConfiguration("hurl").get<string>("outline.groupMode", "hierarchical");
   const outlineSortMode = vscode.workspace.getConfiguration("hurl").get<string>("outline.sortMode", "source");
+  const variableInlayHintsEnabled = vscode.workspace.getConfiguration("hurl")
+    .get<boolean>("variables.inlayHints.enabled", true);
+  const variableInlayHintsMaxLength = vscode.workspace.getConfiguration("hurl")
+    .get<number>("variables.inlayHints.maxLength", 60);
   const serverOptions: ServerOptions = {
     command,
     options: {
@@ -182,6 +205,8 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
         HURL_RUN_INLINE_FAILURE_DIAGNOSTICS: String(runInlineFailureDiagnostics),
         HURL_OUTLINE_GROUP_MODE: outlineGroupMode,
         HURL_OUTLINE_SORT_MODE: outlineSortMode,
+        HURL_VARIABLE_INLAY_HINTS_ENABLED: String(variableInlayHintsEnabled),
+        HURL_VARIABLE_INLAY_HINTS_MAX_LENGTH: String(variableInlayHintsMaxLength),
       },
     },
   };
@@ -207,10 +232,29 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
   });
   context.subscriptions.push(logNotificationDisposable);
 
+  resultNotificationDisposables.forEach((item) => item.dispose());
+  resultNotificationDisposables = [
+    client.onNotification("hurl/runResult", (raw: unknown) => {
+      if (isRunResult(raw)) inspector?.acceptRun(raw);
+      else appendRuntimeLog("Ignored invalid hurl/runResult payload.");
+    }),
+    client.onNotification("hurl/curlResult", async (raw: unknown) => {
+      if (!isCurlResult(raw)) { appendRuntimeLog("Ignored invalid hurl/curlResult payload."); return; }
+      inspector?.acceptCurl(raw);
+      if (raw.ok && raw.command) {
+        await vscode.env.clipboard.writeText(raw.command);
+        void vscode.window.showInformationMessage("cURL copied to clipboard");
+      } else if (raw.error) {
+        void vscode.window.showWarningMessage("Unable to copy cURL — open Hurl Inspector for details.");
+      }
+    }),
+  ];
+  context.subscriptions.push(...resultNotificationDisposables);
+
   await client.start();
   client.setTrace(toTrace(traceSetting));
   appendRuntimeLog(
-    `Language client started (trace=${traceSetting}, runVerbosity=${runVerbosity}, runLogMaxChars=${runLogMaxChars}, inlineFailureDiagnostics=${runInlineFailureDiagnostics}, outlineGroupMode=${outlineGroupMode}, outlineSortMode=${outlineSortMode}).`,
+    `Language client started (trace=${traceSetting}, runVerbosity=${runVerbosity}, runLogMaxChars=${runLogMaxChars}, inlineFailureDiagnostics=${runInlineFailureDiagnostics}, outlineGroupMode=${outlineGroupMode}, outlineSortMode=${outlineSortMode}, variableInlayHints=${variableInlayHintsEnabled}, variableInlayMaxLength=${variableInlayHintsMaxLength}).`,
   );
 }
 

@@ -1,334 +1,117 @@
 import * as vscode from "vscode";
+import { InspectorStore, InspectorTab } from "./inspectorStore";
+import { DocumentViewModel, formatBody, renderInspectorHtml } from "./inspectorRender";
+import { CurlResult, RunResult } from "./protocol";
 import { Edge, Entry, inferEdges, parseEntries, pickSelectedEntry } from "./webviewModel";
 
-type ViewModel = {
-  uri: string;
-  fileName: string;
-  version: number;
-  selectedIndex: number;
-  entries: Entry[];
-  edges: Edge[];
-};
+type ParsedCache = { uri: string; version: number; fileName: string; entries: Entry[]; edges: Edge[] };
+export type InspectorController = { open(tab?: InspectorTab): void; acceptRun(result: RunResult): void; acceptCurl(result: CurlResult): void; dispose(): void };
 
-type ParsedCache = {
-  uri: string;
-  version: number;
-  fileName: string;
-  entries: Entry[];
-  edges: Edge[];
-};
-
-export function registerWebviewPanel(context: vscode.ExtensionContext, log: (message: string) => void): void {
+export function registerWebviewPanel(context: vscode.ExtensionContext, log: (message: string) => void): InspectorController {
   let panel: vscode.WebviewPanel | undefined;
-  let parsedCache: ParsedCache | undefined;
-  let updatePanel = (force = false) => {
-    if (!force) {
-      return;
-    }
-  };
-  let scheduledRefresh: ReturnType<typeof setTimeout> | undefined;
-  let lastRenderKey: string | undefined;
+  let cache: ParsedCache | undefined;
+  let scheduled: ReturnType<typeof setTimeout> | undefined;
+  let boundDocument: { uri: string; version: number; entryLine?: number } | undefined;
+  const store = new InspectorStore();
 
-  const clearScheduledRefresh = () => {
-    if (!scheduledRefresh) {
-      return;
+  const model = (): DocumentViewModel | undefined => {
+    const active = vscode.window.activeTextEditor;
+    const doc = boundDocument
+      ? vscode.workspace.textDocuments.find((item) => item.uri.toString() === boundDocument?.uri && item.version === boundDocument.version)
+      : active?.document;
+    if (!doc || (doc.languageId !== "hurl" && !doc.fileName.endsWith(".hurl"))) return undefined;
+    if (!cache || cache.uri !== doc.uri.toString() || cache.version !== doc.version) {
+      const entries = parseEntries(doc.getText());
+      cache = { uri: doc.uri.toString(), version: doc.version, fileName: doc.fileName.split(/[\\/]/).pop() ?? doc.fileName, entries, edges: inferEdges(entries) };
     }
-    clearTimeout(scheduledRefresh);
-    scheduledRefresh = undefined;
+    const activeLine = active?.document.uri.toString() === doc.uri.toString() ? active.selection.active.line : boundDocument?.entryLine ?? 0;
+    return { ...cache, selectedIndex: cache.entries.length ? pickSelectedEntry(cache.entries, activeLine) : -1 };
   };
+  const render = () => { if (panel) { const value = model(); const fallbackName = boundDocument ? vscode.Uri.parse(boundDocument.uri).path.split("/").pop() : undefined; panel.title = `Hurl Inspector${value?.fileName || fallbackName ? ` — ${value?.fileName ?? fallbackName}` : ""}`; panel.webview.html = renderInspectorHtml(panel.webview, value, store.snapshot()); } };
+  const schedule = () => { if (!panel) return; if (scheduled) clearTimeout(scheduled); scheduled = setTimeout(() => { scheduled = undefined; render(); }, 50); };
 
-  const schedulePanelUpdate = (force = false) => {
-    if (!panel) {
-      return;
+  const open = (tab?: InspectorTab, source?: { uri: string; version: number; entryLine?: number }) => {
+    if (source) {
+      boundDocument = source;
+      store.selectDocument(source.uri, source.version);
+      cache = undefined;
+    } else if (!boundDocument) {
+      const editor = vscode.window.activeTextEditor;
+      if (editor) {
+        boundDocument = { uri: editor.document.uri.toString(), version: editor.document.version, entryLine: editor.selection.active.line };
+        store.selectDocument(boundDocument.uri, boundDocument.version);
+      }
     }
-    clearScheduledRefresh();
-    scheduledRefresh = setTimeout(() => {
-      scheduledRefresh = undefined;
-      updatePanel(force);
-    }, 50);
-  };
-
-  const openOrReveal = () => {
-    if (panel) {
-      panel.reveal(vscode.ViewColumn.Beside, true);
-      schedulePanelUpdate(true);
-      return;
-    }
-    panel = vscode.window.createWebviewPanel("hurlWebviewPanel", "Hurl Webview", vscode.ViewColumn.Beside, {
-      enableScripts: true,
-      retainContextWhenHidden: true,
-    });
-    const onDispose = panel.onDidDispose(() => {
-      clearScheduledRefresh();
-      panel = undefined;
-      parsedCache = undefined;
-      lastRenderKey = undefined;
-      onDispose.dispose();
-      onDidReceiveMessage.dispose();
-    });
-    const onDidReceiveMessage = panel.webview.onDidReceiveMessage(
-      async (msg: { type?: string; line?: number; uri?: string }) => {
-        if (!msg.uri) {
-          return;
+    if (tab) store.select(tab);
+    if (panel) { panel.reveal(vscode.ViewColumn.Beside, true); render(); return; }
+    panel = vscode.window.createWebviewPanel("hurlInspector", "Hurl Inspector", vscode.ViewColumn.Beside, { enableScripts: true, retainContextWhenHidden: true });
+    panel.onDidDispose(() => { panel = undefined; if (scheduled) clearTimeout(scheduled); }, null, context.subscriptions);
+    panel.webview.onDidReceiveMessage(async (message: Record<string, string>) => {
+      if (message.type === "select-tab" && ["request", "chain", "result", "curl"].includes(message.tab)) { store.select(message.tab as InspectorTab); render(); return; }
+      if (message.type === "toggle-secrets") { store.toggleSecrets(); render(); return; }
+      if (message.type === "select-run") { store.selectRun(Number(message.index)); render(); return; }
+      if (message.type === "copy-curl") { const command = store.snapshot().curl?.command; if (command) { await vscode.env.clipboard.writeText(command); void vscode.window.showInformationMessage("cURL copied to clipboard"); } return; }
+      if (message.type === "copy-request") {
+        const snapshot = store.snapshot();
+        const exchange = snapshot.runs[snapshot.selectedRun]?.exchanges[Number(message.exchange)];
+        const body = exchange?.request.body;
+        if (body?.encoding === "utf8" && body.text !== undefined) {
+          await vscode.env.clipboard.writeText(formatBody(body));
+          void vscode.window.showInformationMessage("Request body copied to clipboard");
         }
-      if (msg.type === "run-entry" && typeof msg.line === "number") {
-        await vscode.commands.executeCommand("hurl.runEntry", msg.uri, msg.line);
-        log(`webview run entry requested at line=${msg.line}`);
         return;
       }
-      if (msg.type === "run-chain" && typeof msg.line === "number") {
-        await vscode.commands.executeCommand("hurl.runChain", msg.uri, msg.line);
-        log(`webview run chain requested at line=${msg.line}`);
+      if (message.type === "copy-response") {
+        const snapshot = store.snapshot();
+        const exchange = snapshot.runs[snapshot.selectedRun]?.exchanges[Number(message.exchange)];
+        const body = exchange?.response?.body;
+        if (body?.encoding === "utf8" && body.text !== undefined) {
+          await vscode.env.clipboard.writeText(formatBody(body));
+          void vscode.window.showInformationMessage("Response body copied to clipboard");
+        }
         return;
       }
-      if (msg.type === "reveal-line" && typeof msg.line === "number") {
-        const document = await vscode.workspace.openTextDocument(vscode.Uri.parse(msg.uri));
-        const editor = await vscode.window.showTextDocument(document, { preview: false, preserveFocus: true });
-        const position = new vscode.Position(msg.line, 0);
-        editor.selection = new vscode.Selection(position, position);
-        editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
-        return;
-      }
-      },
-    );
-
-    updatePanel = (force = false) => {
-      if (!panel) {
-        return;
-      }
-      const activeEditor = vscode.window.activeTextEditor;
-      const { model, cache } = buildModel(activeEditor, parsedCache);
-      parsedCache = cache;
-      const renderKey = model ? `${model.uri}@${model.version}:${model.selectedIndex}` : "empty";
-      if (!force && renderKey === lastRenderKey) {
-        return;
-      }
-      lastRenderKey = renderKey;
-      panel.title = model ? `Hurl Webview — ${model.fileName}` : "Hurl Webview";
-      panel.webview.html = renderHtml(panel.webview, model);
-    };
-    updatePanel(true);
+      const line = Number(message.line);
+      if (!message.uri || Number.isNaN(line)) return;
+      const commands: Record<string, string> = { "run-entry": "hurl.runEntry", "run-vars": "hurl.runEntryWithVars", "run-chain": "hurl.runChain", "copy-curl-command": "hurl.copyAsCurl" };
+      const command = commands[message.type];
+      if (command) { await vscode.commands.executeCommand(command, message.uri, line); log(`Inspector ${message.type} requested at line=${line}`); }
+    }, null, context.subscriptions);
+    render();
   };
 
+  const controller: InspectorController = {
+    open,
+    acceptRun(result) { store.pushRun(result); open("result", { uri: result.uri, version: result.documentVersion, entryLine: result.entryLine }); },
+    acceptCurl(result) { store.setCurl(result); open("curl", { uri: result.uri, version: result.documentVersion, entryLine: result.entryLine }); },
+    dispose() { panel?.dispose(); panel = undefined; },
+  };
   context.subscriptions.push(
     vscode.commands.registerCommand("hurl.openWebviewPanel", () => {
-      openOrReveal();
+      const editor = vscode.window.activeTextEditor;
+      open("request", editor ? { uri: editor.document.uri.toString(), version: editor.document.version, entryLine: editor.selection.active.line } : undefined);
     }),
-  );
-  context.subscriptions.push(
-    vscode.window.onDidChangeActiveTextEditor(() => {
-      parsedCache = undefined;
-      schedulePanelUpdate(true);
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      const tab = store.snapshot().tab;
+      if (editor && (tab === "request" || tab === "chain")) {
+        boundDocument = { uri: editor.document.uri.toString(), version: editor.document.version, entryLine: editor.selection.active.line };
+        store.selectDocument(boundDocument.uri, boundDocument.version);
+      }
+      cache = undefined;
+      schedule();
     }),
-  );
-  context.subscriptions.push(
     vscode.workspace.onDidChangeTextDocument((event) => {
-      const active = vscode.window.activeTextEditor?.document;
-      if (active && event.document.uri.toString() === active.uri.toString()) {
-        parsedCache = undefined;
-        schedulePanelUpdate(true);
+      const tab = store.snapshot().tab;
+      if (boundDocument?.uri === event.document.uri.toString() && (tab === "request" || tab === "chain")) {
+        boundDocument = { ...boundDocument, version: event.document.version };
+        store.selectDocument(boundDocument.uri, boundDocument.version);
+        store.select(tab);
       }
+      cache = undefined;
+      schedule();
     }),
+    vscode.window.onDidChangeTextEditorSelection(schedule),
+    { dispose: () => controller.dispose() },
   );
-  context.subscriptions.push(
-    vscode.window.onDidChangeTextEditorSelection((event) => {
-      const active = vscode.window.activeTextEditor;
-      if (!active || event.textEditor.document.uri.toString() !== active.document.uri.toString()) {
-        return;
-      }
-      schedulePanelUpdate();
-    }),
-  );
-}
-
-function buildModel(
-  editor: vscode.TextEditor | undefined,
-  cache: ParsedCache | undefined,
-): { model: ViewModel | undefined; cache: ParsedCache | undefined } {
-  if (!editor) {
-    return { model: undefined, cache: undefined };
-  }
-  const doc = editor.document;
-  if (doc.languageId !== "hurl" && !doc.fileName.endsWith(".hurl")) {
-    return { model: undefined, cache: undefined };
-  }
-  const uri = doc.uri.toString();
-  const fileName = doc.fileName.split(/[\\/]/).pop() ?? doc.fileName;
-  const version = doc.version;
-  let resolvedCache = cache;
-  if (!resolvedCache || resolvedCache.uri !== uri || resolvedCache.version !== version) {
-    const entries = parseEntries(doc.getText());
-    resolvedCache = {
-      uri,
-      version,
-      fileName,
-      entries,
-      edges: inferEdges(entries),
-    };
-  }
-  const cursorLine = editor.selection.active.line;
-  const selectedIndex = resolvedCache.entries.length > 0 ? pickSelectedEntry(resolvedCache.entries, cursorLine) : -1;
-  return {
-    model: {
-      uri,
-      fileName,
-      version,
-      selectedIndex,
-      entries: resolvedCache.entries,
-      edges: resolvedCache.edges,
-    },
-    cache: resolvedCache,
-  };
-}
-
-function renderHtml(webview: vscode.Webview, model: ViewModel | undefined): string {
-  const nonce = String(Date.now());
-  const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';`;
-  const payload = JSON.stringify(model ?? null).replace(/</g, "\\u003c");
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="Content-Security-Policy" content="${csp}" />
-  <style>
-    :root {
-      --bg: var(--vscode-editor-background);
-      --fg: var(--vscode-editor-foreground);
-      --muted: var(--vscode-descriptionForeground);
-      --accent: var(--vscode-button-background);
-      --accent-fg: var(--vscode-button-foreground);
-      --border: var(--vscode-panel-border);
-      --chip: var(--vscode-badge-background);
-    }
-    body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); font-family: var(--vscode-font-family); }
-    h1 { margin: 0 0 8px; font-size: 16px; }
-    .tabs { display: flex; gap: 8px; margin: 12px 0; }
-    .tab { border: 1px solid var(--border); background: transparent; color: var(--fg); padding: 6px 10px; cursor: pointer; border-radius: 6px; }
-    .tab.active { background: var(--accent); color: var(--accent-fg); border-color: transparent; }
-    .hidden { display: none; }
-    .card { border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
-    .title { font-weight: 700; margin-bottom: 6px; }
-    .meta { color: var(--muted); font-size: 12px; margin: 3px 0; }
-    .actions { display: flex; gap: 8px; margin-top: 12px; }
-    .btn { background: var(--accent); color: var(--accent-fg); border: none; border-radius: 6px; padding: 6px 10px; cursor: pointer; }
-    pre { background: color-mix(in srgb, var(--bg) 85%, var(--fg) 15%); padding: 10px; border-radius: 8px; overflow: auto; }
-    .node { border: 1px solid var(--border); border-radius: 8px; padding: 8px; margin-bottom: 8px; }
-    .edge { color: var(--muted); font-size: 12px; margin: 2px 0; }
-    .chip { display: inline-block; background: var(--chip); color: var(--accent-fg); border-radius: 999px; padding: 2px 8px; font-size: 11px; margin-right: 6px; }
-  </style>
-</head>
-<body>
-  <h1>Hurl Webview</h1>
-  <div id="empty" class="meta hidden">Open a .hurl file to view request details and chain graph.</div>
-  <div id="content" class="hidden">
-    <div class="tabs">
-      <button class="tab active" id="tab-single">Single Request</button>
-      <button class="tab" id="tab-chain">Chain Graph</button>
-    </div>
-    <section id="single"></section>
-    <section id="chain" class="hidden"></section>
-  </div>
-  <script nonce="${nonce}">
-    const vscode = acquireVsCodeApi();
-    const data = ${payload};
-    const empty = document.getElementById("empty");
-    const content = document.getElementById("content");
-    const single = document.getElementById("single");
-    const chain = document.getElementById("chain");
-    const tabSingle = document.getElementById("tab-single");
-    const tabChain = document.getElementById("tab-chain");
-
-    const escapeHtml = (v) => String(v)
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;");
-
-    function button(label, type, line, uri) {
-      return \`<button class="btn" data-type="\${type}" data-line="\${line}" data-uri="\${uri}">\${label}</button>\`;
-    }
-
-    function renderSingle(model) {
-      if (!model || model.selectedIndex < 0 || !model.entries[model.selectedIndex]) {
-        single.innerHTML = '<div class="meta">No request selected.</div>';
-        return;
-      }
-      const e = model.entries[model.selectedIndex];
-      const chips = [e.priority, e.caseId, e.stepType, e.stepId].filter(Boolean).map((c) => \`<span class="chip">\${escapeHtml(c)}</span>\`).join("");
-      single.innerHTML = \`
-        <div class="card">
-          <div class="title">\${escapeHtml(e.method)} \${escapeHtml(e.target)}</div>
-          <div class="meta">line: \${e.line + 1}</div>
-          \${e.title ? \`<div class="meta">title: \${escapeHtml(e.title)}</div>\` : ""}
-          <div style="margin:8px 0;">\${chips}</div>
-          <div class="actions">
-            \${button("Run", "run-entry", e.line, model.uri)}
-            \${button("Run Chain", "run-chain", e.line, model.uri)}
-            \${button("Reveal", "reveal-line", e.line, model.uri)}
-          </div>
-        </div>
-        <pre>\${escapeHtml(e.body)}</pre>
-      \`;
-    }
-
-    function renderChain(model) {
-      if (!model || !model.entries.length) {
-        chain.innerHTML = '<div class="meta">No request entries.</div>';
-        return;
-      }
-      const nodes = model.entries.map((e, idx) =>
-        \`<div class="node"><div><strong>\${idx + 1}. \${escapeHtml(e.method)} \${escapeHtml(e.target)}</strong></div><div class="meta">line \${e.line + 1}</div></div>\`
-      ).join("");
-      const edges = model.edges.length
-        ? model.edges.map((edge) => {
-            const from = model.entries[edge.from];
-            const to = model.entries[edge.to];
-            const vars = edge.variables.length ? \` (\${edge.variables.join(", ")})\` : "";
-            const tag = edge.explicit ? "explicit" : "inferred";
-            return \`<div class="edge">\${escapeHtml(from.method)} \${escapeHtml(from.target)} → \${escapeHtml(to.method)} \${escapeHtml(to.target)}\${escapeHtml(vars)} [\${tag}]</div>\`;
-          }).join("")
-        : '<div class="meta">No dependency edges inferred.</div>';
-      chain.innerHTML = \`
-        <div class="card">
-          <div class="title">Entries</div>
-          \${nodes}
-        </div>
-        <div class="card">
-          <div class="title">Dependencies</div>
-          \${edges}
-        </div>
-      \`;
-    }
-
-    function activate(tab) {
-      const isSingle = tab === "single";
-      tabSingle.classList.toggle("active", isSingle);
-      tabChain.classList.toggle("active", !isSingle);
-      single.classList.toggle("hidden", !isSingle);
-      chain.classList.toggle("hidden", isSingle);
-    }
-
-    tabSingle.addEventListener("click", () => activate("single"));
-    tabChain.addEventListener("click", () => activate("chain"));
-    document.addEventListener("click", (event) => {
-      const target = event.target;
-      if (!(target instanceof HTMLElement)) return;
-      const type = target.dataset.type;
-      const line = Number(target.dataset.line);
-      const uri = target.dataset.uri;
-      if (!type || Number.isNaN(line)) return;
-      if (!uri) return;
-      vscode.postMessage({ type, line, uri });
-    });
-
-    if (!data) {
-      empty.classList.remove("hidden");
-    } else {
-      content.classList.remove("hidden");
-      renderSingle(data);
-      renderChain(data);
-    }
-  </script>
-</body>
-</html>`;
+  return controller;
 }

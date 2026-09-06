@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+- Preview resolved Hurl variables with native inlay hints, source-aware hover, automatic variable-file refresh, and sensitive-value masking
+- Add a Hurl Inspector with structured request/response headers and bodies, JSON formatting, raw output, failed assertions, and in-memory run history
+- Copy variable-resolved cURL commands directly to the clipboard without sending a request, with Inspector preview and secret masking
+
+### Fixes
+
+- Use one canonical merged variable precedence for diagnostics, hover, completion, Run with vars, and cURL generation
+
+### Documentation
+
+- Add a Marketplace icon: geometric `hurl` wordmark in official Hurl pink
+- Add a Marketplace README and LICENSE to the VSCode extension package, including hurl-lsp install steps
+- Publish the VSCode extension to Open VSX for VSCodium
+
 ## 0.1.13 - 2026-05-08
 
 ### Fixes

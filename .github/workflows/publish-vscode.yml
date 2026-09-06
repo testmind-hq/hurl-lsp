@@ -33,9 +33,14 @@ jobs:
       - name: Build extension
         run: npm run build
       - name: Package extension
-        run: npx @vscode/vsce package
+        run: npx @vscode/vsce package --out vscode-hurl.vsix
       - name: Publish to VS Marketplace
         if: ${{ inputs.dry_run != true }}
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: npx @vscode/vsce publish
+        run: npx @vscode/vsce publish --packagePath vscode-hurl.vsix
+      - name: Publish to Open VSX
+        if: ${{ inputs.dry_run != true }}
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: npx ovsx publish vscode-hurl.vsix --skip-duplicate

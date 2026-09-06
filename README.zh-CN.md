@@ -40,7 +40,6 @@ English README: [`README.md`](README.md)
 尚未实现：
 
 - 更丰富的断言行内结果渲染（actual value）
-- VSCode Webview 面板
 - TestMind 集成
 
 ---
@@ -72,6 +71,7 @@ English README: [`README.md`](README.md)
 
 变量引用可跳转到同文件 `[Captures]` 定义；  
 若工作区存在 `.hurl-vars`、`vars.env`、`hurl.env`、`.env`，也可跨文件解析定义与诊断。
+解析后的变量值会显示为行内提示；token、password、authorization 等敏感名称默认遮罩。可通过 `hurl.variables.inlayHints.enabled` 和 `hurl.variables.inlayHints.maxLength` 配置。
 
 ### Code Lens
 
@@ -79,10 +79,10 @@ English README: [`README.md`](README.md)
 
 - 摘要行（method/path + section 统计）
 - `▶ Run`（执行当前请求块）
-- `⚡ Run with vars`（使用就近变量文件执行）
+- `⚡ Run with vars`（按工作区覆盖顺序合并有效变量文件后执行）
 - `⛓ Run chain`（执行当前请求及其依赖步骤）
 - `📄 Run file`（执行当前文件全部请求）
-- `📋 Copy as curl`（复制 curl）
+- `📋 Copy as curl`（解析变量后直接复制到剪贴板，并打开 cURL 检视页）
 
 运行告警行为：
 
@@ -109,12 +109,16 @@ English README: [`README.md`](README.md)
 - `hurl.outline.groupMode`: `hierarchical` | `flat`
 - `hurl.outline.sortMode`: `source` | `priority`
 
-### VSCode Webview 面板
+### VSCode Hurl Inspector
 
-命令 `Hurl: Open Webview Panel` 可打开独立标签页，包含：
+命令 `Hurl: Open Inspector` 可打开侧边检视面板，包含：
 
-- `Single Request`：单请求详情 + `Run` / `Run Chain` 动作
-- `Chain Graph`：请求列表与推断/显式依赖边
+- `Request`：请求详情以及 Run、Run with vars、Run Chain、Copy as cURL
+- `Chain`：请求列表与推断/显式依赖边
+- `Result`：结构化请求/响应 headers 与 body、JSON 格式化、断言、原始输出和最近 10 次内存历史
+- `cURL`：完整命令、敏感值遮罩、显示/隐藏以及再次复制
+
+`Copy as cURL` 是静态操作，不会发送网络请求；支持 URL、headers、query、Basic Auth、JSON/XML/文本 body、form 和 multipart。运行时 capture 与动态内置值需要先成为可静态解析的变量才能复制。
 
 ### 文档大纲（Document Symbol）
 
@@ -147,7 +151,8 @@ English README: [`README.md`](README.md)
 
 ### VSCode
 
-在 VS Marketplace 搜索 `hurl-lsp` / `Hurl` 安装。  
+在 [VS Marketplace](https://marketplace.visualstudio.com) 或 [Open VSX](https://open-vsx.org/extension/testmind-hq/vscode-hurl)（VSCodium）搜索 `hurl-lsp` / `Hurl` 安装。  
+详情文案在 [`editors/vscode/README.md`](editors/vscode/README.md)。  
 也可使用 release 流水线产出的 `.vsix` 包安装。
 
 二进制解析顺序：

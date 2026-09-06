@@ -1,11 +1,230 @@
 use crate::syntax::{method_from_line, section_name_from_line};
+use crate::{
+    protocol::{
+        BodyContent, FailedAssertion, HeaderField, HttpExchange, HttpRequestData, HttpResponseData,
+        RunResult,
+    },
+    variables::is_sensitive_name,
+};
+use serde_json::Value;
+use std::{fs, path::Path};
 use tower_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
+use url::Url;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RunSummary {
     pub success: bool,
     pub failed_asserts: usize,
     pub duration_ms: Option<u64>,
+}
+
+const BODY_LIMIT: usize = 1024 * 1024;
+
+#[derive(Clone, Copy, Debug)]
+pub enum RunTarget {
+    Entry,
+    Chain,
+    File,
+}
+
+impl RunTarget {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Entry => "entry",
+            Self::Chain => "chain",
+            Self::File => "file",
+        }
+    }
+}
+
+pub struct RunResultContext<'a> {
+    pub uri: &'a Url,
+    pub document_version: i32,
+    pub entry_line: u32,
+    pub target: RunTarget,
+    pub success: bool,
+    pub exit_code: Option<i32>,
+}
+
+pub fn parse_hurl_report_result(
+    context: RunResultContext<'_>,
+    report_root: &Path,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> RunResult {
+    let stdout_text = String::from_utf8_lossy(stdout).into_owned();
+    let stderr_text = String::from_utf8_lossy(stderr).into_owned();
+    let report_path = report_root.join("report.json");
+    let parsed = fs::read(&report_path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+    let mut result = RunResult {
+        uri: context.uri.to_string(),
+        document_version: context.document_version,
+        entry_line: context.entry_line,
+        target: context.target.as_str().into(),
+        success: context.success,
+        exit_code: context.exit_code,
+        started_at: String::new(),
+        duration_ms: None,
+        exchanges: Vec::new(),
+        failed_assertions: Vec::new(),
+        stdout: stdout_text,
+        stderr: stderr_text,
+        parse_warning: None,
+    };
+    let Some(root) = parsed else {
+        result.parse_warning =
+            Some("Hurl JSON report was unavailable or invalid; showing raw output.".into());
+        return result;
+    };
+    let Some(file) = root
+        .as_array()
+        .and_then(|items| items.first())
+        .or_else(|| root.as_object().map(|_| &root))
+    else {
+        result.parse_warning = Some("Hurl JSON report did not contain a file result.".into());
+        return result;
+    };
+    result.duration_ms = file.get("time").and_then(Value::as_u64);
+    for entry in file
+        .get("entries")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        for assertion in entry
+            .get("asserts")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if assertion.get("success").and_then(Value::as_bool) == Some(false) {
+                result.failed_assertions.push(FailedAssertion {
+                    message: assertion
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("Assertion failed")
+                        .into(),
+                    line: assertion
+                        .get("line")
+                        .and_then(Value::as_u64)
+                        .map(|line| line.saturating_sub(1) as u32),
+                });
+            }
+        }
+        for call in entry
+            .get("calls")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let request = call.get("request").unwrap_or(&Value::Null);
+            let response = call.get("response");
+            if result.started_at.is_empty() {
+                result.started_at = call
+                    .get("timings")
+                    .and_then(|v| v.get("begin_call"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .into();
+            }
+            let duration_ms = call
+                .get("timings")
+                .and_then(|v| v.get("total"))
+                .and_then(Value::as_u64)
+                .map(|micros| micros / 1000);
+            result.exchanges.push(HttpExchange {
+                request: HttpRequestData {
+                    method: request
+                        .get("method")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .into(),
+                    url: request
+                        .get("url")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .into(),
+                    headers: parse_headers(request.get("headers")),
+                    body: read_body(request.get("body"), request.get("headers"), report_root),
+                },
+                response: response.map(|response| HttpResponseData {
+                    version: response
+                        .get("http_version")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    status: response
+                        .get("status")
+                        .and_then(Value::as_u64)
+                        .map(|v| v as u16),
+                    headers: parse_headers(response.get("headers")),
+                    body: read_body(response.get("body"), response.get("headers"), report_root),
+                }),
+                duration_ms,
+            });
+        }
+    }
+    if result.started_at.is_empty() {
+        result.started_at = "unknown".into();
+    }
+    result
+}
+
+fn parse_headers(value: Option<&Value>) -> Vec<HeaderField> {
+    value
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|header| {
+            let name = header
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            HeaderField {
+                sensitive: is_sensitive_name(&name)
+                    || matches!(name.to_ascii_lowercase().as_str(), "cookie" | "set-cookie"),
+                name,
+                value: header
+                    .get("value")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+            }
+        })
+        .collect()
+}
+
+fn read_body(
+    reference: Option<&Value>,
+    headers: Option<&Value>,
+    report_root: &Path,
+) -> Option<BodyContent> {
+    let relative = reference.and_then(Value::as_str)?;
+    let bytes = fs::read(report_root.join(relative)).ok()?;
+    let original_bytes = bytes.len();
+    let shown = &bytes[..bytes.len().min(BODY_LIMIT)];
+    let media_type = parse_headers(headers)
+        .into_iter()
+        .find(|h| h.name.eq_ignore_ascii_case("content-type"))
+        .map(|h| h.value);
+    match std::str::from_utf8(shown) {
+        Ok(text) => Some(BodyContent {
+            text: Some(text.to_string()),
+            media_type,
+            encoding: "utf8".into(),
+            original_bytes,
+            truncated: original_bytes > BODY_LIMIT,
+        }),
+        Err(_) => Some(BodyContent {
+            text: None,
+            media_type,
+            encoding: "binary".into(),
+            original_bytes,
+            truncated: original_bytes > BODY_LIMIT,
+        }),
+    }
 }
 
 pub fn execution_diagnostics_for_result(line: u32, success: bool, detail: &str) -> Vec<Diagnostic> {
@@ -198,5 +417,62 @@ mod tests {
         assert!(!summary.success);
         assert_eq!(summary.failed_asserts, 1);
         assert_eq!(summary.duration_ms, Some(120));
+    }
+
+    #[test]
+    fn parses_report_metadata_and_body() {
+        let root = std::env::temp_dir().join(format!("hurl-lsp-report-{}", std::process::id()));
+        fs::create_dir_all(root.join("store")).expect("mkdir");
+        fs::write(root.join("store/body.json"), "{\"ok\":true}").expect("body");
+        fs::write(root.join("report.json"), r#"[{"success":true,"time":12,"entries":[{"asserts":[],"calls":[{"request":{"method":"GET","url":"https://example.com","headers":[{"name":"Authorization","value":"Bearer token"}]},"response":{"http_version":"HTTP/2","status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":"store/body.json"},"timings":{"begin_call":"2026-09-05T00:00:00Z","total":4300}}]}]}]"#).expect("report");
+        let uri = Url::parse("file:///tmp/a.hurl").expect("uri");
+        let result = parse_hurl_report_result(
+            RunResultContext {
+                uri: &uri,
+                document_version: 2,
+                entry_line: 0,
+                target: RunTarget::Entry,
+                success: true,
+                exit_code: Some(0),
+            },
+            &root,
+            b"",
+            b"",
+        );
+        assert_eq!(result.duration_ms, Some(12));
+        assert_eq!(
+            result.exchanges[0].response.as_ref().and_then(|r| r.status),
+            Some(200)
+        );
+        assert_eq!(
+            result.exchanges[0]
+                .response
+                .as_ref()
+                .and_then(|r| r.body.as_ref())
+                .and_then(|b| b.text.as_deref()),
+            Some("{\"ok\":true}")
+        );
+        assert!(result.exchanges[0].request.headers[0].sensitive);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn falls_back_to_raw_output_for_invalid_report() {
+        let uri = Url::parse("file:///tmp/a.hurl").expect("uri");
+        let result = parse_hurl_report_result(
+            RunResultContext {
+                uri: &uri,
+                document_version: 1,
+                entry_line: 0,
+                target: RunTarget::Entry,
+                success: false,
+                exit_code: Some(2),
+            },
+            Path::new("/missing"),
+            b"raw",
+            b"error",
+        );
+        assert!(result.parse_warning.is_some());
+        assert_eq!(result.stdout, "raw");
     }
 }

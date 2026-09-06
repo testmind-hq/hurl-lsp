@@ -1,5 +1,23 @@
 # 更新日志
 
+## 未发布
+
+### 新功能
+
+- 使用原生 Inlay Hint 预览 Hurl 变量，支持来源 Hover、变量文件自动刷新和敏感值遮罩
+- 新增 Hurl Inspector，结构化展示请求/响应 headers 与 body、JSON 格式化、原始输出、失败断言和内存运行历史
+- 将解析变量后的 cURL 直接复制到剪贴板，全程不发送请求，并在 Inspector 中提供遮罩预览
+
+### 修复
+
+- 诊断、Hover、补全、Run with vars 与 cURL 生成统一使用同一套变量合并优先级
+
+### 文档
+
+- 增加 Marketplace 图标：几何 stroke `hurl` wordmark，官方粉
+- 为 VSCode 扩展包补充 Marketplace README 和 LICENSE，并写明 hurl-lsp 安装步骤
+- 将 VSCode 扩展同步发布到 Open VSX，供 VSCodium 安装
+
 ## 0.1.13 - 2026-05-08
 
 ### 修复
