@@ -517,7 +517,7 @@ impl LanguageServer for Backend {
         let verbosity = arguments
             .get(2)
             .and_then(|value| value.as_str().map(|s| s.to_string()))
-            .or_else(|| std::env::var("HURL_RUN_VERBOSITY").ok())
+            .or_else(|| env_with_legacy("HLSP_RUN_VERBOSITY", "HURL_RUN_VERBOSITY"))
             .unwrap_or_else(|| "verbose".to_string());
         if params.command == COPY_AS_CURL_COMMAND || params.command == PREVIEW_CURL_COMMAND {
             let Some((text, version)) = self.documents.snapshot(&uri) else {
@@ -664,7 +664,8 @@ impl LanguageServer for Backend {
             .arg("--no-color")
             .arg("--no-pretty");
         let mut merged_vars_file = None;
-        if params.command == RUN_ENTRY_WITH_VARS_COMMAND {
+        let use_workspace_vars = command_uses_workspace_vars(&params.command);
+        if use_workspace_vars {
             let roots = self.workspace_roots().await;
             let variables = resolve_workspace_variables(&uri, &roots);
             let parent = uri
@@ -698,7 +699,7 @@ impl LanguageServer for Backend {
                     .await;
             }
         }
-        let command_preview = if params.command == RUN_ENTRY_WITH_VARS_COMMAND {
+        let command_preview = if use_workspace_vars {
             format!("hurl --{verbosity} <tempfile> [--variables-file <detected>]")
         } else {
             format!("hurl --{verbosity} <tempfile>")
@@ -713,6 +714,23 @@ impl LanguageServer for Backend {
             uri, line
         ))
         .await;
+
+        // Older extension versions used HURL_* for language-server settings.
+        // Hurl interprets every HURL_* environment variable as a request variable,
+        // so keep accepting those settings above but never leak them into the CLI.
+        for key in [
+            "HURL_RUN_VERBOSITY",
+            "HURL_RUN_LOG_MAX_CHARS",
+            "HURL_RUN_INLINE_FAILURE_DIAGNOSTICS",
+            "HURL_OUTLINE_GROUP_MODE",
+            "HURL_OUTLINE_SORT_MODE",
+            "HURL_OUTLINE_MAX_ENTRIES",
+            "HURL_OUTLINE_MAX_DEPTH",
+            "HURL_VARIABLE_INLAY_HINTS_ENABLED",
+            "HURL_VARIABLE_INLAY_HINTS_MAX_LENGTH",
+        ] {
+            cmd.env_remove(key);
+        }
 
         let output = cmd.output().await;
         drop(merged_vars_file);
@@ -901,8 +919,7 @@ fn truncate_message_with_limit(input: &str, max_chars: Option<usize>) -> String 
 }
 
 fn request_log_max_chars() -> Option<usize> {
-    let value = std::env::var("HURL_RUN_LOG_MAX_CHARS")
-        .ok()
+    let value = env_with_legacy("HLSP_RUN_LOG_MAX_CHARS", "HURL_RUN_LOG_MAX_CHARS")
         .and_then(|raw| raw.parse::<usize>().ok());
     match value {
         Some(0) => None,
@@ -912,28 +929,47 @@ fn request_log_max_chars() -> Option<usize> {
 }
 
 fn run_inline_failure_diagnostics_enabled() -> bool {
-    parse_inline_failure_diagnostics_enabled(
-        std::env::var("HURL_RUN_INLINE_FAILURE_DIAGNOSTICS").ok(),
-    )
+    parse_inline_failure_diagnostics_enabled(env_with_legacy(
+        "HLSP_RUN_INLINE_FAILURE_DIAGNOSTICS",
+        "HURL_RUN_INLINE_FAILURE_DIAGNOSTICS",
+    ))
 }
 
 fn variable_inlay_hints_enabled() -> bool {
     !matches!(
-        std::env::var("HURL_VARIABLE_INLAY_HINTS_ENABLED")
-            .unwrap_or_else(|_| "true".into())
-            .trim()
-            .to_ascii_lowercase()
-            .as_str(),
+        env_with_legacy(
+            "HLSP_VARIABLE_INLAY_HINTS_ENABLED",
+            "HURL_VARIABLE_INLAY_HINTS_ENABLED",
+        )
+        .unwrap_or_else(|| "true".into())
+        .trim()
+        .to_ascii_lowercase()
+        .as_str(),
         "0" | "false" | "off" | "no"
     )
 }
 
 fn variable_inlay_hints_max_length() -> usize {
-    std::env::var("HURL_VARIABLE_INLAY_HINTS_MAX_LENGTH")
+    env_with_legacy(
+        "HLSP_VARIABLE_INLAY_HINTS_MAX_LENGTH",
+        "HURL_VARIABLE_INLAY_HINTS_MAX_LENGTH",
+    )
+    .and_then(|value| value.parse().ok())
+    .unwrap_or(60)
+    .clamp(8, 500)
+}
+
+fn env_with_legacy(primary: &str, legacy: &str) -> Option<String> {
+    std::env::var(primary)
         .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(60)
-        .clamp(8, 500)
+        .or_else(|| std::env::var(legacy).ok())
+}
+
+fn command_uses_workspace_vars(command: &str) -> bool {
+    matches!(
+        command,
+        RUN_ENTRY_WITH_VARS_COMMAND | RUN_CHAIN_COMMAND | RUN_FILE_COMMAND
+    )
 }
 
 fn parse_inline_failure_diagnostics_enabled(raw: Option<String>) -> bool {
@@ -1030,6 +1066,14 @@ mod tests {
     #[test]
     fn inline_failure_diagnostics_enabled_defaults_true() {
         assert!(parse_inline_failure_diagnostics_enabled(None));
+    }
+
+    #[test]
+    fn chain_and_file_runs_use_workspace_variables() {
+        assert!(command_uses_workspace_vars(RUN_ENTRY_WITH_VARS_COMMAND));
+        assert!(command_uses_workspace_vars(RUN_CHAIN_COMMAND));
+        assert!(command_uses_workspace_vars(RUN_FILE_COMMAND));
+        assert!(!command_uses_workspace_vars(RUN_ENTRY_COMMAND));
     }
 
     #[test]

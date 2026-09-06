@@ -54,6 +54,19 @@ pub struct HttpExchange {
     pub response: Option<HttpResponseData>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timings: Option<HttpTimings>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HttpTimings {
+    pub dns_ms: u64,
+    pub tcp_ms: u64,
+    pub tls_ms: u64,
+    pub ttfb_ms: u64,
+    pub download_ms: u64,
+    pub total_ms: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

@@ -2,7 +2,7 @@ use crate::syntax::{method_from_line, section_name_from_line};
 use crate::{
     protocol::{
         BodyContent, FailedAssertion, HeaderField, HttpExchange, HttpRequestData, HttpResponseData,
-        RunResult,
+        HttpTimings, RunResult,
     },
     variables::is_sensitive_name,
 };
@@ -134,6 +134,7 @@ pub fn parse_hurl_report_result(
                 .and_then(|v| v.get("total"))
                 .and_then(Value::as_u64)
                 .map(|micros| micros / 1000);
+            let timings = call.get("timings").and_then(parse_http_timings);
             result.exchanges.push(HttpExchange {
                 request: HttpRequestData {
                     method: request
@@ -168,6 +169,7 @@ pub fn parse_hurl_report_result(
                     body: read_body(response.get("body"), response.get("headers"), report_root),
                 }),
                 duration_ms,
+                timings,
             });
         }
     }
@@ -175,6 +177,34 @@ pub fn parse_hurl_report_result(
         result.started_at = "unknown".into();
     }
     result
+}
+
+fn parse_http_timings(value: &Value) -> Option<HttpTimings> {
+    let total = value.get("total")?.as_u64()?;
+    let name_lookup = value
+        .get("name_lookup")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let connect = value
+        .get("connect")
+        .and_then(Value::as_u64)
+        .unwrap_or(name_lookup);
+    let app_connect = value
+        .get("app_connect")
+        .and_then(Value::as_u64)
+        .unwrap_or(connect);
+    let start_transfer = value
+        .get("start_transfer")
+        .and_then(Value::as_u64)
+        .unwrap_or(app_connect);
+    Some(HttpTimings {
+        dns_ms: name_lookup / 1000,
+        tcp_ms: connect.saturating_sub(name_lookup) / 1000,
+        tls_ms: app_connect.saturating_sub(connect) / 1000,
+        ttfb_ms: start_transfer.saturating_sub(app_connect.max(connect)) / 1000,
+        download_ms: total.saturating_sub(start_transfer) / 1000,
+        total_ms: total / 1000,
+    })
 }
 
 fn parse_headers(value: Option<&Value>) -> Vec<HeaderField> {
@@ -500,7 +530,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("hurl-lsp-report-{}", std::process::id()));
         fs::create_dir_all(root.join("store")).expect("mkdir");
         fs::write(root.join("store/body.json"), "{\"ok\":true}").expect("body");
-        fs::write(root.join("report.json"), r#"[{"success":true,"time":12,"entries":[{"asserts":[],"curl_cmd":"curl --data $'{\"name\":\"O\\'Brien\"}\\n' 'https://example.com'","calls":[{"request":{"method":"POST","url":"https://example.com","headers":[{"name":"Authorization","value":"Bearer token"},{"name":"Content-Type","value":"application/json"}]},"response":{"http_version":"HTTP/2","status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":"store/body.json"},"timings":{"begin_call":"2026-09-05T00:00:00Z","total":4300}}]}]}]"#).expect("report");
+        fs::write(root.join("report.json"), r#"[{"success":true,"time":15,"entries":[{"asserts":[],"curl_cmd":"curl --data $'{\"name\":\"O\\'Brien\"}\\n' 'https://example.com'","calls":[{"request":{"method":"POST","url":"https://example.com","headers":[{"name":"Authorization","value":"Bearer token"},{"name":"Content-Type","value":"application/json"}]},"response":{"http_version":"HTTP/2","status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":"store/body.json"},"timings":{"begin_call":"2026-09-05T00:00:00Z","name_lookup":1000,"connect":3000,"app_connect":8000,"start_transfer":12000,"total":15000}}]}]}]"#).expect("report");
         let uri = Url::parse("file:///tmp/a.hurl").expect("uri");
         let result = parse_hurl_report_result(
             RunResultContext {
@@ -515,7 +545,13 @@ mod tests {
             b"",
             b"",
         );
-        assert_eq!(result.duration_ms, Some(12));
+        assert_eq!(result.duration_ms, Some(15));
+        let timings = result.exchanges[0].timings.as_ref().expect("timings");
+        assert_eq!((timings.dns_ms, timings.tcp_ms, timings.tls_ms), (1, 2, 5));
+        assert_eq!(
+            (timings.ttfb_ms, timings.download_ms, timings.total_ms),
+            (4, 3, 15)
+        );
         assert_eq!(
             result.exchanges[0].response.as_ref().and_then(|r| r.status),
             Some(200)

@@ -202,13 +202,13 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
     options: {
       env: {
         ...process.env,
-        HURL_RUN_VERBOSITY: runVerbosity,
-        HURL_RUN_LOG_MAX_CHARS: String(runLogMaxChars),
-        HURL_RUN_INLINE_FAILURE_DIAGNOSTICS: String(runInlineFailureDiagnostics),
-        HURL_OUTLINE_GROUP_MODE: outlineGroupMode,
-        HURL_OUTLINE_SORT_MODE: outlineSortMode,
-        HURL_VARIABLE_INLAY_HINTS_ENABLED: String(variableInlayHintsEnabled),
-        HURL_VARIABLE_INLAY_HINTS_MAX_LENGTH: String(variableInlayHintsMaxLength),
+        HLSP_RUN_VERBOSITY: runVerbosity,
+        HLSP_RUN_LOG_MAX_CHARS: String(runLogMaxChars),
+        HLSP_RUN_INLINE_FAILURE_DIAGNOSTICS: String(runInlineFailureDiagnostics),
+        HLSP_OUTLINE_GROUP_MODE: outlineGroupMode,
+        HLSP_OUTLINE_SORT_MODE: outlineSortMode,
+        HLSP_VARIABLE_INLAY_HINTS_ENABLED: String(variableInlayHintsEnabled),
+        HLSP_VARIABLE_INLAY_HINTS_MAX_LENGTH: String(variableInlayHintsMaxLength),
       },
     },
   };

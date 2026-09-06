@@ -24,11 +24,17 @@ test("renders copy request action for text bodies", () => {
   assert.ok(html.includes('data-type="copy-request"'));
   assert.ok(html.includes('data-exchange="0"'));
 });
-test("labels run and HTTP timings explicitly", () => {
-  const store = new InspectorStore(); store.pushRun({ uri:"file:///a",documentVersion:1,entryLine:0,target:"entry",success:true,startedAt:"x",durationMs:42,exchanges:[{durationMs:38,request:{method:"GET",url:"https://example.com",headers:[]}}],failedAssertions:[],stdout:"",stderr:"" });
+test("labels run and HTTP timing breakdown explicitly", () => {
+  const store = new InspectorStore(); store.pushRun({ uri:"file:///a",documentVersion:1,entryLine:0,target:"entry",success:true,startedAt:"x",durationMs:42,exchanges:[{durationMs:38,timings:{dnsMs:1,tcpMs:2,tlsMs:5,ttfbMs:4,downloadMs:3,totalMs:15},request:{method:"GET",url:"https://example.com",headers:[]}}],failedAssertions:[],stdout:"",stderr:"" });
   const html = renderInspectorHtml({ cspSource:"vscode" }, undefined, store.snapshot());
   assert.ok(html.includes("Run total: 42 ms"));
   assert.ok(html.includes("HTTP total: 38 ms"));
+  assert.ok(html.includes("DNS 1 ms"));
+  assert.ok(html.includes("TCP 2 ms"));
+  assert.ok(html.includes("TLS 5 ms"));
+  assert.ok(html.includes("TTFB 4 ms"));
+  assert.ok(html.includes("Download 3 ms"));
+  assert.ok(html.includes("Total 15 ms"));
 });
 test("renders an independent curl preview action", () => {
   const store = new InspectorStore();
