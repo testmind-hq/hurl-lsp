@@ -165,7 +165,9 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
 
   if (!command) {
     try {
-      const binaryVersion = String(context.extension.packageJSON.version ?? "").trim();
+      const binaryVersion = String(
+        context.extension.packageJSON.hurlLspVersion ?? context.extension.packageJSON.version ?? "",
+      ).trim();
       if (!binaryVersion) {
         throw new Error("Missing extension version for release binary resolution.");
       }
@@ -241,10 +243,10 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
     client.onNotification("hurl/curlResult", async (raw: unknown) => {
       if (!isCurlResult(raw)) { appendRuntimeLog("Ignored invalid hurl/curlResult payload."); return; }
       inspector?.acceptCurl(raw);
-      if (raw.ok && raw.command) {
+      if (raw.ok && raw.command && raw.copyToClipboard) {
         await vscode.env.clipboard.writeText(raw.command);
         void vscode.window.showInformationMessage("cURL copied to clipboard");
-      } else if (raw.error) {
+      } else if (raw.error && raw.copyToClipboard) {
         void vscode.window.showWarningMessage("Unable to copy cURL — open Hurl Inspector for details.");
       }
     }),

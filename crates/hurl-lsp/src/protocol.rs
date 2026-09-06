@@ -99,6 +99,7 @@ pub struct CurlResult {
     pub unresolved_variables: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    pub copy_to_clipboard: bool,
 }
 
 pub enum RunResultNotification {}
@@ -128,6 +129,7 @@ mod tests {
             display_command: None,
             unresolved_variables: vec!["token".into()],
             error: Some("missing".into()),
+            copy_to_clipboard: false,
         };
         let value = serde_json::to_value(result).expect("json");
         assert_eq!(value["documentVersion"], 2);

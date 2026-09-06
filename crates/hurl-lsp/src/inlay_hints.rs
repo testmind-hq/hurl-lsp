@@ -22,7 +22,7 @@ pub fn variable_inlay_hints(
             continue;
         }
         let visible_runtime = visible_variables_before_line(text, line_index);
-        for (_, end, name) in variable_placeholders(line) {
+        for (_, _, name) in variable_placeholders(line) {
             let (label, tooltip) = if let Some(variable) = external.get(name) {
                 let value = if variable.sensitive {
                     "••••••".to_string()
@@ -39,19 +39,19 @@ pub fn variable_inlay_hints(
                     })
                     .unwrap_or_else(|| variable.uri.to_string());
                 (
-                    format!("= {value}"),
+                    format!("{name} = {value}"),
                     format!("**{name}**\n\nSource: `{source}:{}`", variable.line + 1),
                 )
             } else if visible_runtime.contains(name) || BUILTIN_VARIABLES.contains(&name) {
                 (
-                    "= runtime value".to_string(),
+                    format!("{name} = runtime value"),
                     format!("**{name}**\n\nAvailable only at runtime."),
                 )
             } else {
                 continue;
             };
             hints.push(InlayHint {
-                position: Position::new(line_no, utf16_offset(line, end)),
+                position: Position::new(line_no, line.encode_utf16().count() as u32),
                 label: InlayHintLabel::String(label),
                 kind: Some(InlayHintKind::TYPE),
                 text_edits: None,
@@ -60,19 +60,12 @@ pub fn variable_inlay_hints(
                     value: tooltip,
                 })),
                 padding_left: Some(true),
-                padding_right: None,
+                padding_right: Some(false),
                 data: None,
             });
         }
     }
     hints
-}
-
-fn utf16_offset(line: &str, byte_offset: usize) -> u32 {
-    line.get(..byte_offset)
-        .unwrap_or(line)
-        .encode_utf16()
-        .count() as u32
 }
 
 fn truncate(value: &str, max_length: usize) -> String {
@@ -129,10 +122,10 @@ mod tests {
         assert_eq!(
             labels(&hints),
             vec![
-                "= https://exa…",
-                "= ••••••",
-                "= runtime value",
-                "= runtime value"
+                "base_url = https://exa…",
+                "token = ••••••",
+                "captured = runtime value",
+                "newUuid = runtime value"
             ]
         );
     }
@@ -141,11 +134,11 @@ mod tests {
     fn positions_hint_with_utf16_code_units_after_unicode() {
         let external = BTreeMap::from([("host".into(), variable("host", "example.com", false))]);
         let hints = variable_inlay_hints(
-            "GET 😀/{{host}}",
+            "GET 😀/{{host}}/get",
             Range::new(Position::new(0, 0), Position::new(0, 99)),
             &external,
             60,
         );
-        assert_eq!(hints[0].position.character, 15);
+        assert_eq!(hints[0].position.character, 19);
     }
 }

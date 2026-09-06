@@ -147,7 +147,13 @@ pub fn parse_hurl_report_result(
                         .unwrap_or("")
                         .into(),
                     headers: parse_headers(request.get("headers")),
-                    body: read_body(request.get("body"), request.get("headers"), report_root),
+                    body: read_body(request.get("body"), request.get("headers"), report_root)
+                        .or_else(|| {
+                            read_request_body_from_curl(
+                                entry.get("curl_cmd"),
+                                request.get("headers"),
+                            )
+                        }),
                 },
                 response: response.map(|response| HttpResponseData {
                     version: response
@@ -225,6 +231,76 @@ fn read_body(
             truncated: original_bytes > BODY_LIMIT,
         }),
     }
+}
+
+fn read_request_body_from_curl(
+    curl_command: Option<&Value>,
+    headers: Option<&Value>,
+) -> Option<BodyContent> {
+    let command = curl_command.and_then(Value::as_str)?;
+    let argument = ["--data-raw ", "--data-binary ", "--data "]
+        .iter()
+        .find_map(|flag| {
+            command
+                .find(flag)
+                .map(|index| &command[index + flag.len()..])
+        })?;
+    let text = parse_shell_argument(argument.trim_start())?;
+    if text.starts_with('@') {
+        return None;
+    }
+    let original_bytes = text.len();
+    let mut shown_bytes = original_bytes.min(BODY_LIMIT);
+    while !text.is_char_boundary(shown_bytes) {
+        shown_bytes -= 1;
+    }
+    let truncated = shown_bytes < original_bytes;
+    let text = text[..shown_bytes].to_string();
+    let media_type = parse_headers(headers)
+        .into_iter()
+        .find(|header| header.name.eq_ignore_ascii_case("content-type"))
+        .map(|header| header.value);
+    Some(BodyContent {
+        text: Some(text),
+        media_type,
+        encoding: "utf8".into(),
+        original_bytes,
+        truncated,
+    })
+}
+
+fn parse_shell_argument(input: &str) -> Option<String> {
+    if let Some(rest) = input.strip_prefix("$'") {
+        return decode_ansi_c_string(rest);
+    }
+    if let Some(rest) = input.strip_prefix('\'') {
+        return rest.find('\'').map(|end| rest[..end].to_string());
+    }
+    let end = input.find(char::is_whitespace).unwrap_or(input.len());
+    (!input[..end].is_empty()).then(|| input[..end].to_string())
+}
+
+fn decode_ansi_c_string(input: &str) -> Option<String> {
+    let mut output = String::new();
+    let mut chars = input.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\'' => return Some(output),
+            '\\' => {
+                let escaped = chars.next()?;
+                output.push(match escaped {
+                    'n' => '\n',
+                    'r' => '\r',
+                    't' => '\t',
+                    'b' => '\u{0008}',
+                    'f' => '\u{000c}',
+                    other => other,
+                });
+            }
+            other => output.push(other),
+        }
+    }
+    None
 }
 
 pub fn execution_diagnostics_for_result(line: u32, success: bool, detail: &str) -> Vec<Diagnostic> {
@@ -424,7 +500,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("hurl-lsp-report-{}", std::process::id()));
         fs::create_dir_all(root.join("store")).expect("mkdir");
         fs::write(root.join("store/body.json"), "{\"ok\":true}").expect("body");
-        fs::write(root.join("report.json"), r#"[{"success":true,"time":12,"entries":[{"asserts":[],"calls":[{"request":{"method":"GET","url":"https://example.com","headers":[{"name":"Authorization","value":"Bearer token"}]},"response":{"http_version":"HTTP/2","status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":"store/body.json"},"timings":{"begin_call":"2026-09-05T00:00:00Z","total":4300}}]}]}]"#).expect("report");
+        fs::write(root.join("report.json"), r#"[{"success":true,"time":12,"entries":[{"asserts":[],"curl_cmd":"curl --data $'{\"name\":\"O\\'Brien\"}\\n' 'https://example.com'","calls":[{"request":{"method":"POST","url":"https://example.com","headers":[{"name":"Authorization","value":"Bearer token"},{"name":"Content-Type","value":"application/json"}]},"response":{"http_version":"HTTP/2","status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":"store/body.json"},"timings":{"begin_call":"2026-09-05T00:00:00Z","total":4300}}]}]}]"#).expect("report");
         let uri = Url::parse("file:///tmp/a.hurl").expect("uri");
         let result = parse_hurl_report_result(
             RunResultContext {
@@ -453,6 +529,14 @@ mod tests {
             Some("{\"ok\":true}")
         );
         assert!(result.exchanges[0].request.headers[0].sensitive);
+        assert_eq!(
+            result.exchanges[0]
+                .request
+                .body
+                .as_ref()
+                .and_then(|body| body.text.as_deref()),
+            Some("{\"name\":\"O'Brien\"}\n")
+        );
         let _ = fs::remove_dir_all(root);
     }
 

@@ -1,8 +1,8 @@
 use crate::{
     code_lens::{
         code_lenses_with_context, extract_entry_text, CLEAR_RUN_DIAGNOSTICS_COMMAND,
-        COPY_AS_CURL_COMMAND, NOOP_COMMAND, RUN_CHAIN_COMMAND, RUN_ENTRY_COMMAND,
-        RUN_ENTRY_WITH_VARS_COMMAND, RUN_FILE_COMMAND,
+        COPY_AS_CURL_COMMAND, NOOP_COMMAND, PREVIEW_CURL_COMMAND, RUN_CHAIN_COMMAND,
+        RUN_ENTRY_COMMAND, RUN_ENTRY_WITH_VARS_COMMAND, RUN_FILE_COMMAND,
     },
     completion::completions_with_external,
     curl::{build_curl_for_entry, CurlBuildError},
@@ -256,6 +256,7 @@ impl LanguageServer for Backend {
                         RUN_CHAIN_COMMAND.to_string(),
                         RUN_FILE_COMMAND.to_string(),
                         COPY_AS_CURL_COMMAND.to_string(),
+                        PREVIEW_CURL_COMMAND.to_string(),
                         CLEAR_RUN_DIAGNOSTICS_COMMAND.to_string(),
                         NOOP_COMMAND.to_string(),
                     ],
@@ -476,6 +477,7 @@ impl LanguageServer for Backend {
             && params.command != RUN_CHAIN_COMMAND
             && params.command != RUN_FILE_COMMAND
             && params.command != COPY_AS_CURL_COMMAND
+            && params.command != PREVIEW_CURL_COMMAND
             && params.command != CLEAR_RUN_DIAGNOSTICS_COMMAND
         {
             return Ok(None);
@@ -517,7 +519,7 @@ impl LanguageServer for Backend {
             .and_then(|value| value.as_str().map(|s| s.to_string()))
             .or_else(|| std::env::var("HURL_RUN_VERBOSITY").ok())
             .unwrap_or_else(|| "verbose".to_string());
-        if params.command == COPY_AS_CURL_COMMAND {
+        if params.command == COPY_AS_CURL_COMMAND || params.command == PREVIEW_CURL_COMMAND {
             let Some((text, version)) = self.documents.snapshot(&uri) else {
                 return Ok(None);
             };
@@ -533,6 +535,7 @@ impl LanguageServer for Backend {
                     display_command: Some(curl.display_command),
                     unresolved_variables: vec![],
                     error: None,
+                    copy_to_clipboard: params.command == COPY_AS_CURL_COMMAND,
                 },
                 Err(CurlBuildError::UnresolvedVariables(names)) => CurlResult {
                     uri: uri.to_string(),
@@ -542,7 +545,8 @@ impl LanguageServer for Backend {
                     command: None,
                     display_command: None,
                     unresolved_variables: names,
-                    error: Some("Resolve all variables before copying cURL.".into()),
+                    error: Some("Resolve all variables before generating cURL.".into()),
+                    copy_to_clipboard: params.command == COPY_AS_CURL_COMMAND,
                 },
                 Err(error) => CurlResult {
                     uri: uri.to_string(),
@@ -553,6 +557,7 @@ impl LanguageServer for Backend {
                     display_command: None,
                     unresolved_variables: vec![],
                     error: Some(format!("{error:?}")),
+                    copy_to_clipboard: params.command == COPY_AS_CURL_COMMAND,
                 },
             };
             let return_value = result.command.clone().map(serde_json::Value::String);

@@ -47,7 +47,16 @@ export function registerWebviewPanel(context: vscode.ExtensionContext, log: (mes
     panel = vscode.window.createWebviewPanel("hurlInspector", "Hurl Inspector", vscode.ViewColumn.Beside, { enableScripts: true, retainContextWhenHidden: true });
     panel.onDidDispose(() => { panel = undefined; if (scheduled) clearTimeout(scheduled); }, null, context.subscriptions);
     panel.webview.onDidReceiveMessage(async (message: Record<string, string>) => {
-      if (message.type === "select-tab" && ["request", "chain", "result", "curl"].includes(message.tab)) { store.select(message.tab as InspectorTab); render(); return; }
+      if (message.type === "select-tab" && ["request", "chain", "result", "curl"].includes(message.tab)) {
+        store.select(message.tab as InspectorTab);
+        render();
+        if (message.tab === "curl") {
+          const value = model();
+          const entry = value && value.selectedIndex >= 0 ? value.entries[value.selectedIndex] : undefined;
+          if (value && entry) await vscode.commands.executeCommand("hurl.previewCurl", value.uri, entry.line);
+        }
+        return;
+      }
       if (message.type === "toggle-secrets") { store.toggleSecrets(); render(); return; }
       if (message.type === "select-run") { store.selectRun(Number(message.index)); render(); return; }
       if (message.type === "copy-curl") { const command = store.snapshot().curl?.command; if (command) { await vscode.env.clipboard.writeText(command); void vscode.window.showInformationMessage("cURL copied to clipboard"); } return; }
@@ -73,7 +82,7 @@ export function registerWebviewPanel(context: vscode.ExtensionContext, log: (mes
       }
       const line = Number(message.line);
       if (!message.uri || Number.isNaN(line)) return;
-      const commands: Record<string, string> = { "run-entry": "hurl.runEntry", "run-vars": "hurl.runEntryWithVars", "run-chain": "hurl.runChain", "copy-curl-command": "hurl.copyAsCurl" };
+      const commands: Record<string, string> = { "run-entry": "hurl.runEntry", "run-vars": "hurl.runEntryWithVars", "run-chain": "hurl.runChain", "copy-curl-command": "hurl.copyAsCurl", "preview-curl": "hurl.previewCurl" };
       const command = commands[message.type];
       if (command) { await vscode.commands.executeCommand(command, message.uri, line); log(`Inspector ${message.type} requested at line=${line}`); }
     }, null, context.subscriptions);
