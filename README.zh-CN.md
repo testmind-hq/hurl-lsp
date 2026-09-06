@@ -152,6 +152,7 @@ English README: [`README.md`](README.md)
 ### VSCode
 
 在 VS Marketplace 搜索 `hurl-lsp` / `Hurl` 安装。  
+Marketplace 详情文案在 [`editors/vscode/README.md`](editors/vscode/README.md)。  
 也可使用 release 流水线产出的 `.vsix` 包安装。
 
 二进制解析顺序：

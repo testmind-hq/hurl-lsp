@@ -27,6 +27,8 @@ Release steps:
 
 Workflow: `.github/workflows/publish-vscode.yml`
 
+The vsix is built from `editors/vscode/`. Marketplace Details uses `editors/vscode/README.md`; keep that file in sync with extension features. `LICENSE` must sit next to `package.json` or `vsce` warns.
+
 Required secret:
 
 - `VSCE_PAT`

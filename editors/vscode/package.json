@@ -22,6 +22,7 @@
     "vscode": "^1.90.0"
   },
   "categories": ["Programming Languages"],
+  "keywords": ["hurl", "http", "api", "testing", "lsp", "language-server"],
   "activationEvents": [
     "onLanguage:hurl",
     "onCommand:hurl.restartLanguageServer",
