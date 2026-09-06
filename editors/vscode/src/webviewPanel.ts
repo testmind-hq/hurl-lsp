@@ -29,6 +29,17 @@ export function registerWebviewPanel(context: vscode.ExtensionContext, log: (mes
   };
   const render = () => { if (panel) { const value = model(); const fallbackName = boundDocument ? vscode.Uri.parse(boundDocument.uri).path.split("/").pop() : undefined; panel.title = `Hurl Inspector${value?.fileName || fallbackName ? ` — ${value?.fileName ?? fallbackName}` : ""}`; panel.webview.html = renderInspectorHtml(panel.webview, value, store.snapshot()); } };
   const schedule = () => { if (!panel) return; if (scheduled) clearTimeout(scheduled); scheduled = setTimeout(() => { scheduled = undefined; render(); }, 50); };
+  const refreshCurl = async () => {
+    if (!panel || store.snapshot().tab !== "curl") return;
+    const value = model();
+    const entry = value && value.selectedIndex >= 0 ? value.entries[value.selectedIndex] : undefined;
+    if (!value || !entry) return;
+    const current = store.snapshot().curl;
+    if (current?.uri === value.uri && current.documentVersion === value.version && current.entryLine === entry.line) return;
+    store.clearCurl();
+    render();
+    await vscode.commands.executeCommand("hurl.previewCurl", value.uri, entry.line);
+  };
 
   const open = (tab?: InspectorTab, source?: { uri: string; version: number; entryLine?: number }) => {
     if (source) {
@@ -50,11 +61,7 @@ export function registerWebviewPanel(context: vscode.ExtensionContext, log: (mes
       if (message.type === "select-tab" && ["request", "chain", "result", "curl"].includes(message.tab)) {
         store.select(message.tab as InspectorTab);
         render();
-        if (message.tab === "curl") {
-          const value = model();
-          const entry = value && value.selectedIndex >= 0 ? value.entries[value.selectedIndex] : undefined;
-          if (value && entry) await vscode.commands.executeCommand("hurl.previewCurl", value.uri, entry.line);
-        }
+        if (message.tab === "curl") await refreshCurl();
         return;
       }
       if (message.type === "toggle-secrets") { store.toggleSecrets(); render(); return; }
@@ -92,7 +99,15 @@ export function registerWebviewPanel(context: vscode.ExtensionContext, log: (mes
   const controller: InspectorController = {
     open,
     acceptRun(result) { store.pushRun(result); open("result", { uri: result.uri, version: result.documentVersion, entryLine: result.entryLine }); },
-    acceptCurl(result) { store.setCurl(result); open("curl", { uri: result.uri, version: result.documentVersion, entryLine: result.entryLine }); },
+    acceptCurl(result) {
+      if (!result.copyToClipboard && panel && store.snapshot().tab === "curl") {
+        const value = model();
+        const entry = value && value.selectedIndex >= 0 ? value.entries[value.selectedIndex] : undefined;
+        if (!value || !entry || value.uri !== result.uri || value.version !== result.documentVersion || entry.line !== result.entryLine) return;
+      }
+      store.setCurl(result);
+      open("curl", { uri: result.uri, version: result.documentVersion, entryLine: result.entryLine });
+    },
     dispose() { panel?.dispose(); panel = undefined; },
   };
   context.subscriptions.push(
@@ -111,15 +126,18 @@ export function registerWebviewPanel(context: vscode.ExtensionContext, log: (mes
     }),
     vscode.workspace.onDidChangeTextDocument((event) => {
       const tab = store.snapshot().tab;
-      if (boundDocument?.uri === event.document.uri.toString() && (tab === "request" || tab === "chain")) {
+      if (boundDocument?.uri === event.document.uri.toString() && (tab === "request" || tab === "chain" || tab === "curl")) {
         boundDocument = { ...boundDocument, version: event.document.version };
         store.selectDocument(boundDocument.uri, boundDocument.version);
         store.select(tab);
       }
       cache = undefined;
-      schedule();
+      if (tab === "curl") void refreshCurl(); else schedule();
     }),
-    vscode.window.onDidChangeTextEditorSelection(schedule),
+    vscode.window.onDidChangeTextEditorSelection(() => {
+      cache = undefined;
+      if (store.snapshot().tab === "curl") void refreshCurl(); else schedule();
+    }),
     { dispose: () => controller.dispose() },
   );
   return controller;

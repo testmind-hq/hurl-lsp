@@ -8,6 +8,7 @@ test("keeps the newest ten in-memory results", () => {
   const value = store.snapshot(); assert.equal(value.runs.length, 10); assert.equal(value.runs[0].entryLine, 2); assert.equal(value.selectedRun, 9); assert.equal(value.tab, "result");
 });
 test("selects curl tab", () => { const store = new InspectorStore(); store.setCurl({ uri: "file:///a", documentVersion: 1, entryLine: 0, ok: false, unresolvedVariables: ["x"] }); assert.equal(store.snapshot().tab, "curl"); });
+test("invalidates a stale curl preview", () => { const store = new InspectorStore(); store.setCurl({ uri: "file:///a", documentVersion: 1, entryLine: 0, ok: true, command: "curl a", unresolvedVariables: [] }); store.clearCurl(); assert.equal(store.snapshot().curl, undefined); assert.equal(store.snapshot().tab, "curl"); });
 test("partitions results by source uri and document version", () => {
   const store = new InspectorStore();
   store.pushRun(run(1));

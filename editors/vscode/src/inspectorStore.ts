@@ -46,6 +46,7 @@ export class InspectorStore {
     state.tab = "curl";
     state.revealSecrets = false;
   }
+  clearCurl(): void { this.current().curl = undefined; }
   select(tab: InspectorTab): void { this.current().tab = tab; }
   selectRun(index: number): void { const state = this.current(); if (index >= 0 && index < state.runs.length) state.selectedRun = index; }
   toggleSecrets(): void { const state = this.current(); state.revealSecrets = !state.revealSecrets; }

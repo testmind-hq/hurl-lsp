@@ -44,7 +44,9 @@ pub fn completions_with_external(
 ) -> Vec<CompletionItem> {
     let line_idx = position.line as usize;
     let line = text.lines().nth(position.line as usize).unwrap_or_default();
-    let prefix = &line[..(position.character as usize).min(line.len())];
+    let cursor = utf16_to_byte_offset(line, position.character as usize);
+    let prefix = &line[..cursor];
+    let suffix = &line[cursor..];
     let trimmed = prefix.trim_start();
 
     if let Some(var_prefix) = variable_prefix(prefix) {
@@ -56,7 +58,11 @@ pub fn completions_with_external(
                 label: name.clone(),
                 kind: Some(CompletionItemKind::VARIABLE),
                 detail: Some("Captured variable".into()),
-                insert_text: Some([name.as_str(), "}}"].concat()),
+                insert_text: Some(if suffix.starts_with("}}") {
+                    name.clone()
+                } else {
+                    [name.as_str(), "}}"].concat()
+                }),
                 ..Default::default()
             })
             .collect();
@@ -140,6 +146,17 @@ pub fn completions_with_external(
         .iter()
         .map(|method| keyword_item(method))
         .collect()
+}
+
+fn utf16_to_byte_offset(value: &str, utf16_offset: usize) -> usize {
+    let mut units = 0;
+    for (byte_offset, ch) in value.char_indices() {
+        if units >= utf16_offset {
+            return byte_offset;
+        }
+        units += ch.len_utf16();
+    }
+    value.len()
 }
 
 fn keyword_item(value: &str) -> CompletionItem {
@@ -336,6 +353,23 @@ mod tests {
             &BTreeMap::new(),
         );
         assert!(items.iter().any(|item| item.label == "host"));
+    }
+
+    #[test]
+    fn variable_completion_reuses_existing_closing_braces() {
+        let text = "GET {{ba}}/get";
+        let mut vars = BTreeSet::new();
+        vars.insert("base_url".to_string());
+        let items = completions_with_external(
+            text,
+            Position::new(0, 8),
+            &vars,
+            &BTreeSet::new(),
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        );
+        let item = items.iter().find(|item| item.label == "base_url").unwrap();
+        assert_eq!(item.insert_text.as_deref(), Some("base_url"));
     }
 
     #[test]
