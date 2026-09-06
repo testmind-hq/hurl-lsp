@@ -12,6 +12,10 @@
 
 - 诊断、Hover、补全、Run with vars 与 cURL 生成统一使用同一套变量合并优先级
 
+### 文档
+
+- 增加 Marketplace 图标：几何 stroke `hurl` wordmark，官方粉
+
 ## 0.1.13 - 2026-05-08
 
 ### 修复

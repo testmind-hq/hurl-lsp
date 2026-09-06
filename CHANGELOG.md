@@ -12,6 +12,10 @@
 
 - Use one canonical merged variable precedence for diagnostics, hover, completion, Run with vars, and cURL generation
 
+### Documentation
+
+- Add a Marketplace icon: geometric `hurl` wordmark in official Hurl pink
+
 ## 0.1.13 - 2026-05-08
 
 ### Fixes
