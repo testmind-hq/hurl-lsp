@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.0 - 2026-09-06
+
 ### Features
 
 - Preview resolved Hurl variables with native inlay hints, source-aware hover, automatic variable-file refresh, and sensitive-value masking
