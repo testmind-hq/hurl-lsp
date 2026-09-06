@@ -2,9 +2,23 @@
 
 ## 未发布
 
+## 0.3.0 - 2026-09-06
+
+### 新功能
+
+- Hurl Inspector 支持结构化复制请求与响应正文、自动生成 cURL 预览并直接复制完整命令
+- 新增 DNS、TCP、TLS、TTFB、下载、HTTP 与完整运行耗时明细
+- Run Chain 和 Run File 自动加载检测到的工作区变量文件
+- 增强 VS Code 中的 Hurl 语法高亮与文件图标关联
+
 ### 修复
 
 - 修正 VS Marketplace README 中的图标地址
+- 确保 Inspector 运行结果和 cURL 预览始终关联正确的文档、版本与所选请求
+- 将变量 Inlay Hint 安全地显示在 UTF-16 行尾，避免干扰 Hurl 源码
+- 避免变量补全重复插入闭合花括号
+- 从 Hurl 报告恢复 POST 请求正文，并生成有效且已解析变量的 cURL 命令
+- 跨文档版本限制 Inspector 历史记录占用
 
 ## 0.2.0 - 2026-09-06
 

@@ -2,9 +2,23 @@
 
 ## Unreleased
 
+## 0.3.0 - 2026-09-06
+
+### Features
+
+- Add structured request and response body copying, automatically generated cURL previews, and direct cURL copying in Hurl Inspector
+- Add DNS, TCP, TLS, TTFB, download, HTTP, and full-run timing details
+- Load detected workspace variable files automatically for Run Chain and Run File
+- Add clearer Hurl syntax highlighting and file icon association in VS Code
+
 ### Fixes
 
 - Fix the VS Marketplace README icon URL
+- Keep Inspector results and cURL previews associated with the correct document, version, and selected request
+- Display variable inlay hints at UTF-16-safe end-of-line positions without disrupting Hurl source text
+- Prevent variable completion from duplicating closing braces
+- Recover POST request bodies from Hurl reports and generate valid resolved cURL commands
+- Bound Inspector history across document versions
 
 ## 0.2.0 - 2026-09-06
 
