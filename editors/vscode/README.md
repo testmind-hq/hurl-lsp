@@ -2,7 +2,7 @@
 
 Language support for [Hurl](https://hurl.dev) `.hurl` files, powered by [hurl-lsp](https://github.com/testmind-hq/hurl-lsp).
 
-![Hurl LSP](media/icon.png)
+![Hurl LSP](https://raw.githubusercontent.com/testmind-hq/hurl-lsp/main/editors/vscode/media/icon.png)
 
 The extension registers the `hurl` language, starts a local language server, and auto-downloads a matching `hurl-lsp` binary when needed.
 

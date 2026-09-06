@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixes
+
+- Fix the VS Marketplace README icon URL
+
 ## 0.2.0 - 2026-09-06
 
 ### Features
