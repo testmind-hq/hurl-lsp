@@ -51,6 +51,16 @@ export function registerWebviewPanel(context: vscode.ExtensionContext, log: (mes
       if (message.type === "toggle-secrets") { store.toggleSecrets(); render(); return; }
       if (message.type === "select-run") { store.selectRun(Number(message.index)); render(); return; }
       if (message.type === "copy-curl") { const command = store.snapshot().curl?.command; if (command) { await vscode.env.clipboard.writeText(command); void vscode.window.showInformationMessage("cURL copied to clipboard"); } return; }
+      if (message.type === "copy-request") {
+        const snapshot = store.snapshot();
+        const exchange = snapshot.runs[snapshot.selectedRun]?.exchanges[Number(message.exchange)];
+        const body = exchange?.request.body;
+        if (body?.encoding === "utf8" && body.text !== undefined) {
+          await vscode.env.clipboard.writeText(formatBody(body));
+          void vscode.window.showInformationMessage("Request body copied to clipboard");
+        }
+        return;
+      }
       if (message.type === "copy-response") {
         const snapshot = store.snapshot();
         const exchange = snapshot.runs[snapshot.selectedRun]?.exchanges[Number(message.exchange)];
@@ -90,7 +100,16 @@ export function registerWebviewPanel(context: vscode.ExtensionContext, log: (mes
       cache = undefined;
       schedule();
     }),
-    vscode.workspace.onDidChangeTextDocument(() => { cache = undefined; schedule(); }),
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      const tab = store.snapshot().tab;
+      if (boundDocument?.uri === event.document.uri.toString() && (tab === "request" || tab === "chain")) {
+        boundDocument = { ...boundDocument, version: event.document.version };
+        store.selectDocument(boundDocument.uri, boundDocument.version);
+        store.select(tab);
+      }
+      cache = undefined;
+      schedule();
+    }),
     vscode.window.onDidChangeTextEditorSelection(schedule),
     { dispose: () => controller.dispose() },
   );

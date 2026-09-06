@@ -26,10 +26,13 @@ function headers(items: HeaderField[], reveal: boolean): string {
 
 function exchange(value: HttpExchange, reveal: boolean, index: number): string {
   const response = value.response;
-  const copyButton = response?.body?.encoding === "utf8" && response.body.text !== undefined
+  const copyRequestButton = value.request.body?.encoding === "utf8" && value.request.body.text !== undefined
+    ? `<button data-type="copy-request" data-exchange="${index}">Copy request body</button>`
+    : "";
+  const copyResponseButton = response?.body?.encoding === "utf8" && response.body.text !== undefined
     ? `<button data-type="copy-response" data-exchange="${index}">Copy response body</button>`
     : "";
-  return `<div class="grid"><section class="card"><h3>Request</h3><div class="headline">${escapeHtml(value.request.method)} ${escapeHtml(value.request.url)}</div>${headers(value.request.headers, reveal)}<pre>${escapeHtml(formatBody(value.request.body))}</pre></section><section class="card"><div class="section-title"><h3>Response</h3>${copyButton}</div>${response ? `<div class="headline">${escapeHtml(response.version ?? "HTTP")} ${escapeHtml(response.status ?? "")}</div>${headers(response.headers, reveal)}<pre>${escapeHtml(formatBody(response.body))}</pre>` : '<div class="muted">No HTTP response</div>'}</section></div>`;
+  return `<div class="grid"><section class="card"><div class="section-title"><h3>Request</h3>${copyRequestButton}</div><div class="headline">${escapeHtml(value.request.method)} ${escapeHtml(value.request.url)}</div>${headers(value.request.headers, reveal)}<pre>${escapeHtml(formatBody(value.request.body))}</pre></section><section class="card"><div class="section-title"><h3>Response</h3>${copyResponseButton}</div>${response ? `<div class="headline">${escapeHtml(response.version ?? "HTTP")} ${escapeHtml(response.status ?? "")}</div>${headers(response.headers, reveal)}<pre>${escapeHtml(formatBody(response.body))}</pre>` : '<div class="muted">No HTTP response</div>'}</section></div>`;
 }
 
 function resultView(result: RunResult | undefined, snapshot: InspectorSnapshot): string {

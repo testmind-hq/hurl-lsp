@@ -18,3 +18,13 @@ test("partitions results by source uri and document version", () => {
   store.selectDocument("file:///a.hurl", 2);
   assert.equal(store.snapshot().runs.length, 0);
 });
+test("limits run history across document versions", () => {
+  const store = new InspectorStore();
+  for (let version = 1; version <= 12; version += 1) store.pushRun({ ...run(version), documentVersion: version });
+  store.selectDocument("file:///a.hurl", 3);
+  assert.deepEqual(store.snapshot().runs.map((value) => value.documentVersion), [3]);
+  store.selectDocument("file:///a.hurl", 1);
+  assert.equal(store.snapshot().runs.length, 0);
+  store.selectDocument("file:///a.hurl", 12);
+  assert.deepEqual(store.snapshot().runs.map((value) => value.documentVersion), [12]);
+});

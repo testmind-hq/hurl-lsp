@@ -1,43 +1,154 @@
 {
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
   "scopeName": "source.hurl",
   "name": "Hurl",
   "patterns": [
     { "include": "#comments" },
+    { "include": "#response-lines" },
+    { "include": "#request-lines" },
     { "include": "#sections" },
-    { "include": "#methods" },
-    { "include": "#variables" }
+    { "include": "#multiline-strings" },
+    { "include": "#templates" },
+    { "include": "#encoded-values" },
+    { "include": "#keys" },
+    { "include": "#strings" },
+    { "include": "#operators" },
+    { "include": "#keywords" },
+    { "include": "#literals" }
   ],
   "repository": {
     "comments": {
-      "patterns": [
-        {
-          "name": "comment.line.number-sign.hurl",
-          "match": "#.*$"
+      "patterns": [{ "name": "comment.line.number-sign.hurl", "match": "#.*$" }]
+    },
+    "request-lines": {
+      "patterns": [{
+        "begin": "^(\\s*)([A-Z]+)(\\s+)",
+        "beginCaptures": { "2": { "name": "keyword.control.method.hurl" } },
+        "end": "(?=\\s*#)|$",
+        "contentName": "markup.underline.link.hurl",
+        "patterns": [
+          { "include": "#templates" },
+          { "name": "constant.character.escape.hurl", "match": "\\\\#" }
+        ]
+      }]
+    },
+    "response-lines": {
+      "patterns": [{
+        "match": "^(\\s*)(HTTP(?:/(?:1\\.0|1\\.1|2|3|\\*))?)(\\s+)([0-9]+|\\*)\\b",
+        "captures": {
+          "2": { "name": "keyword.control.version.hurl" },
+          "4": { "name": "constant.numeric.status.hurl" }
         }
-      ]
+      }]
     },
     "sections": {
+      "patterns": [{
+        "match": "^(\\s*)(\\[)(QueryStringParams|Query|FormParams|Form|MultipartFormData|Multipart|Cookies|Captures|Asserts|Options|BasicAuth|Headers)(\\])",
+        "captures": {
+          "2": { "name": "punctuation.definition.section.begin.hurl" },
+          "3": { "name": "keyword.control.section.hurl" },
+          "4": { "name": "punctuation.definition.section.end.hurl" }
+        }
+      }]
+    },
+    "keys": {
+      "patterns": [{
+        "match": "^(\\s*)([A-Za-z0-9_.\\-\\[\\]@$]+)(\\s*)(:)",
+        "captures": {
+          "2": { "name": "entity.name.tag.hurl" },
+          "4": { "name": "punctuation.separator.key-value.hurl" }
+        }
+      }]
+    },
+    "templates": {
+      "patterns": [{
+        "name": "meta.template.hurl",
+        "begin": "\\{\\{",
+        "beginCaptures": { "0": { "name": "punctuation.definition.template.begin.hurl" } },
+        "end": "\\}\\}",
+        "endCaptures": { "0": { "name": "punctuation.definition.template.end.hurl" } },
+        "contentName": "variable.other.template.hurl",
+        "patterns": [
+          { "name": "support.function.builtin.hurl", "match": "\\b(getEnv|newDate|newUuid)\\b" },
+          { "include": "#filter-keywords" },
+          { "include": "#strings" }
+        ]
+      }]
+    },
+    "strings": {
       "patterns": [
         {
-          "name": "entity.name.section.hurl",
-          "match": "^\\s*\\[[A-Za-z]+\\]\\s*$"
+          "name": "string.quoted.double.hurl",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            { "name": "constant.character.escape.hurl", "match": "\\\\(?:[\"\\\\/bfnrt]|u\\{[0-9A-Fa-f]+\\}|u[0-9A-Fa-f]{4})" },
+            { "include": "#templates" }
+          ]
+        },
+        {
+          "name": "string.quoted.other.backtick.hurl",
+          "begin": "`",
+          "end": "`",
+          "patterns": [
+            { "name": "constant.character.escape.hurl", "match": "\\\\(?:`|#|\\\\|[bfnrt]|u\\{[0-9A-Fa-f]+\\})" },
+            { "include": "#templates" }
+          ]
         }
       ]
     },
-    "methods": {
+    "multiline-strings": {
+      "patterns": [{
+        "name": "string.quoted.multiline.hurl",
+        "begin": "(```)([A-Za-z0-9]+)?",
+        "beginCaptures": {
+          "1": { "name": "punctuation.definition.string.begin.hurl" },
+          "2": { "name": "storage.type.multiline.hurl" }
+        },
+        "end": "```",
+        "patterns": [
+          { "include": "#templates" },
+          { "name": "constant.character.escape.hurl", "match": "\\\\(?:`|\\\\|[bfnrt]|u\\{[0-9A-Fa-f]+\\})" }
+        ]
+      }]
+    },
+    "encoded-values": {
+      "patterns": [{
+        "begin": "\\b(base64|hex|file)(,)",
+        "beginCaptures": {
+          "1": { "name": "support.function.encoding.hurl" },
+          "2": { "name": "punctuation.separator.hurl" }
+        },
+        "end": ";|$",
+        "contentName": "string.unquoted.encoded.hurl",
+        "patterns": [{ "include": "#templates" }]
+      }]
+    },
+    "operators": {
       "patterns": [
-        {
-          "name": "keyword.control.method.hurl",
-          "match": "^\\s*(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\\b"
-        }
+        { "name": "keyword.operator.comparison.hurl", "match": "==|!=|>=|<=|>|<" },
+        { "name": "keyword.operator.logical.hurl", "match": "\\bnot\\b" }
       ]
     },
-    "variables": {
+    "keywords": {
       "patterns": [
-        {
-          "name": "variable.other.hurl",
-          "match": "\\{\\{[^}]+\\}\\}"
-        }
+        { "name": "support.function.query.hurl", "match": "\\b(status|version|url|ip|header|certificate|cookie|body|xpath|jsonpath|regex|variable|duration|bytes|sha256|md5|redirects)\\b" },
+        { "name": "support.function.predicate.hurl", "match": "\\b(startsWith|endsWith|matches|contains|includes|exists|isBoolean|isCollection|isDate|isEmpty|isFloat|isInteger|isNumber|isIpv4|isIpv6|isIsoDate|isList|isObject|isString|isUuid)\\b" },
+        { "include": "#filter-keywords" },
+        { "name": "constant.other.certificate-field.hurl", "match": "\\b(Subject|Issuer|Start-Date|Expire-Date|Serial-Number)\\b" }
+      ]
+    },
+    "filter-keywords": {
+      "patterns": [{
+        "name": "support.function.filter.hurl",
+        "match": "\\b(base64Decode|base64Encode|base64UrlSafeDecode|base64UrlSafeEncode|charsetDecode|count|daysAfterNow|daysBeforeNow|first|dateFormat|htmlEscape|htmlUnescape|jsonpath|last|location|nth|regex|replaceRegex|replace|split|toDate|toFloat|toHex|toInt|toString|urlDecode|urlEncode|urlQueryParam|utf8Decode|utf8Encode|xpath)\\b"
+      }]
+    },
+    "literals": {
+      "patterns": [
+        { "name": "constant.language.boolean.hurl", "match": "\\b(?:true|false)\\b" },
+        { "name": "constant.language.null.hurl", "match": "\\bnull\\b" },
+        { "name": "constant.numeric.hurl", "match": "-?\\b\\d+(?:\\.\\d+)?\\b" }
       ]
     }
   }

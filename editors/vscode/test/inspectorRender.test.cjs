@@ -18,3 +18,9 @@ test("renders copy response action for text bodies", () => {
   assert.ok(html.includes('data-type="copy-response"'));
   assert.ok(html.includes('data-exchange="0"'));
 });
+test("renders copy request action for text bodies", () => {
+  const store = new InspectorStore(); store.pushRun({ uri:"file:///a",documentVersion:1,entryLine:0,target:"entry",success:true,startedAt:"x",exchanges:[{request:{method:"POST",url:"https://example.com",headers:[],body:{text:"hello",encoding:"utf8",originalBytes:5,truncated:false}}}],failedAssertions:[],stdout:"",stderr:"" });
+  const html = renderInspectorHtml({ cspSource:"vscode" }, undefined, store.snapshot());
+  assert.ok(html.includes('data-type="copy-request"'));
+  assert.ok(html.includes('data-exchange="0"'));
+});

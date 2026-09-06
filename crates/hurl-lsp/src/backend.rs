@@ -45,27 +45,32 @@ const REQUEST_LOG_PREFIX: &str = "[hurl-request] ";
 
 #[derive(Default)]
 pub struct DocumentStore {
-    docs: DashMap<Url, String>,
-    versions: DashMap<Url, i32>,
+    docs: DashMap<Url, StoredDocument>,
+}
+
+#[derive(Clone)]
+struct StoredDocument {
+    text: String,
+    version: i32,
 }
 
 impl DocumentStore {
     pub fn get(&self, uri: &Url) -> Option<String> {
-        self.docs.get(uri).map(|entry| entry.clone())
+        self.docs.get(uri).map(|entry| entry.text.clone())
+    }
+
+    pub fn snapshot(&self, uri: &Url) -> Option<(String, i32)> {
+        self.docs
+            .get(uri)
+            .map(|entry| (entry.text.clone(), entry.version))
     }
 
     pub fn insert(&self, uri: Url, text: String, version: i32) {
-        self.versions.insert(uri.clone(), version);
-        self.docs.insert(uri, text);
-    }
-
-    pub fn version(&self, uri: &Url) -> i32 {
-        self.versions.get(uri).map(|v| *v).unwrap_or(0)
+        self.docs.insert(uri, StoredDocument { text, version });
     }
 
     pub fn remove(&self, uri: &Url) {
         self.docs.remove(uri);
-        self.versions.remove(uri);
     }
 }
 
@@ -313,7 +318,7 @@ impl LanguageServer for Backend {
             .documents
             .docs
             .iter()
-            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .map(|entry| (entry.key().clone(), entry.value().text.clone()))
             .collect();
         for (uri, text) in documents {
             self.publish_diagnostics(uri, &text).await;
@@ -513,12 +518,11 @@ impl LanguageServer for Backend {
             .or_else(|| std::env::var("HURL_RUN_VERBOSITY").ok())
             .unwrap_or_else(|| "verbose".to_string());
         if params.command == COPY_AS_CURL_COMMAND {
-            let Some(text) = self.document_text(&uri) else {
+            let Some((text, version)) = self.documents.snapshot(&uri) else {
                 return Ok(None);
             };
             let roots = self.workspace_roots().await;
             let vars = resolve_workspace_variables(&uri, &roots);
-            let version = self.documents.version(&uri);
             let result = match build_curl_for_entry(&text, line, &vars) {
                 Ok(curl) => CurlResult {
                     uri: uri.to_string(),
@@ -558,7 +562,7 @@ impl LanguageServer for Backend {
             return Ok(return_value);
         }
 
-        let Some(text) = self.document_text(&uri) else {
+        let Some((text, document_version)) = self.documents.snapshot(&uri) else {
             return Ok(None);
         };
         let run_target = if params.command == RUN_FILE_COMMAND {
@@ -738,7 +742,7 @@ impl LanguageServer for Backend {
                 let result = parse_hurl_report_result(
                     RunResultContext {
                         uri: &uri,
-                        document_version: self.documents.version(&uri),
+                        document_version,
                         entry_line: line as u32,
                         target: run_target_kind,
                         success: true,
@@ -798,7 +802,7 @@ impl LanguageServer for Backend {
                 let result = parse_hurl_report_result(
                     RunResultContext {
                         uri: &uri,
-                        document_version: self.documents.version(&uri),
+                        document_version,
                         entry_line: line as u32,
                         target: run_target_kind,
                         success: false,
@@ -849,7 +853,7 @@ impl LanguageServer for Backend {
                 let result = parse_hurl_report_result(
                     RunResultContext {
                         uri: &uri,
-                        document_version: self.documents.version(&uri),
+                        document_version,
                         entry_line: line as u32,
                         target: run_target_kind,
                         success: false,
@@ -997,7 +1001,10 @@ mod tests {
         assert!(execution_diagnostics.get(&uri).is_none());
         assert!(execution_summaries.get(&uri).is_none());
         assert_eq!(documents.get(&uri).as_deref(), Some("GET /health"));
-        assert_eq!(documents.version(&uri), 3);
+        assert_eq!(
+            documents.snapshot(&uri),
+            Some(("GET /health".to_string(), 3))
+        );
     }
 
     #[test]
