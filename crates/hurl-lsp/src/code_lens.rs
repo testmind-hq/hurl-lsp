@@ -26,6 +26,7 @@ pub fn code_lenses_with_context(
 ) -> Vec<CodeLens> {
     let parsed = parse_document(text);
     let meta = HurlMetaParser::parse(text);
+    let entry_counts = count_entry_items(text);
     let deps = infer_entry_dependencies(text, &meta);
     let mut deps_in = BTreeMap::<u32, BTreeSet<String>>::new();
     let mut deps_out = BTreeMap::<u32, BTreeSet<String>>::new();
@@ -48,11 +49,12 @@ pub fn code_lenses_with_context(
     parsed
         .entries
         .iter()
-        .flat_map(|entry| {
+        .enumerate()
+        .flat_map(|(entry_index, entry)| {
             let start = Position::new(entry.line, 0);
             let range = Range::new(start, start);
             let (headers, asserts, captures) =
-                count_sections_after_entry(text, entry.line as usize);
+                entry_counts.get(entry_index).copied().unwrap_or_default();
             let status = run_summaries.get(&entry.line).map(format_run_status_suffix);
             let title = if let Some(status) = status {
                 format!(
@@ -161,33 +163,28 @@ pub fn code_lenses_with_context(
         .collect()
 }
 
-fn count_sections_after_entry(text: &str, entry_line: usize) -> (usize, usize, usize) {
-    let mut headers = 0;
-    let mut asserts = 0;
-    let mut captures = 0;
-    let mut in_current_entry = false;
-
-    for (idx, line) in text.lines().enumerate() {
-        let trimmed = line.trim();
-        if idx == entry_line {
-            in_current_entry = true;
-            continue;
-        }
-        if !in_current_entry {
-            continue;
-        }
-        if crate::syntax::method_from_line(trimmed).is_some() {
-            break;
-        }
-        match trimmed {
-            "[Headers]" => headers += 1,
-            "[Asserts]" => asserts += 1,
-            "[Captures]" => captures += 1,
-            _ => {}
-        }
-    }
-
-    (headers, asserts, captures)
+fn count_entry_items(text: &str) -> Vec<(usize, usize, usize)> {
+    hurl_core::parser::parse_hurl_file(text)
+        .map(|file| {
+            file.entries
+                .iter()
+                .map(|entry| {
+                    let headers = entry.request.headers.len();
+                    let asserts = entry
+                        .response
+                        .as_ref()
+                        .map(|response| response.asserts().len())
+                        .unwrap_or_default();
+                    let captures = entry
+                        .response
+                        .as_ref()
+                        .map(|response| response.captures().len())
+                        .unwrap_or_default();
+                    (headers, asserts, captures)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 pub fn extract_entry_text(text: &str, entry_line: usize) -> Option<String> {
@@ -260,7 +257,7 @@ mod tests {
     #[test]
     fn generates_summary_and_run_lenses() {
         let uri = Url::parse("file:///tmp/test.hurl").expect("uri");
-        let text = "GET /users\nHTTP 200\n[Headers]\na: b\n[Asserts]\nstatus == 200\n";
+        let text = "GET /users\nX-Trace: one\nX-Trace: two\nHTTP 200\n[Asserts]\nstatus == 200\n[Captures]\nid: header \"x-id\"\n";
         let lenses = code_lenses(&uri, text);
         assert_eq!(lenses.len(), 6);
         assert!(lenses[0]
@@ -269,6 +266,12 @@ mod tests {
             .expect("summary")
             .title
             .contains("GET /users"));
+        assert!(lenses[0]
+            .command
+            .as_ref()
+            .expect("summary")
+            .title
+            .contains("2 headers │ 1 asserts │ 1 captures"));
         assert_eq!(
             lenses[1].command.as_ref().expect("run").command,
             RUN_ENTRY_COMMAND
