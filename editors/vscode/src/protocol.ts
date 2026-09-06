@@ -4,6 +4,7 @@ export type HttpExchange = {
   request: { method: string; url: string; headers: HeaderField[]; body?: BodyContent };
   response?: { version?: string; status?: number; headers: HeaderField[]; body?: BodyContent };
   durationMs?: number;
+  timings?: { dnsMs: number; tcpMs: number; tlsMs: number; ttfbMs: number; downloadMs: number; totalMs: number };
 };
 export type RunResult = {
   uri: string; documentVersion: number; entryLine: number; target: "entry" | "chain" | "file";
@@ -13,7 +14,7 @@ export type RunResult = {
 };
 export type CurlResult = {
   uri: string; documentVersion: number; entryLine: number; ok: boolean;
-  command?: string; displayCommand?: string; unresolvedVariables: string[]; error?: string;
+  command?: string; displayCommand?: string; unresolvedVariables: string[]; error?: string; copyToClipboard?: boolean;
 };
 
 const record = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;

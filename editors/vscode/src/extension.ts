@@ -165,7 +165,9 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
 
   if (!command) {
     try {
-      const binaryVersion = String(context.extension.packageJSON.version ?? "").trim();
+      const binaryVersion = String(
+        context.extension.packageJSON.hurlLspVersion ?? context.extension.packageJSON.version ?? "",
+      ).trim();
       if (!binaryVersion) {
         throw new Error("Missing extension version for release binary resolution.");
       }
@@ -200,13 +202,13 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
     options: {
       env: {
         ...process.env,
-        HURL_RUN_VERBOSITY: runVerbosity,
-        HURL_RUN_LOG_MAX_CHARS: String(runLogMaxChars),
-        HURL_RUN_INLINE_FAILURE_DIAGNOSTICS: String(runInlineFailureDiagnostics),
-        HURL_OUTLINE_GROUP_MODE: outlineGroupMode,
-        HURL_OUTLINE_SORT_MODE: outlineSortMode,
-        HURL_VARIABLE_INLAY_HINTS_ENABLED: String(variableInlayHintsEnabled),
-        HURL_VARIABLE_INLAY_HINTS_MAX_LENGTH: String(variableInlayHintsMaxLength),
+        HLSP_RUN_VERBOSITY: runVerbosity,
+        HLSP_RUN_LOG_MAX_CHARS: String(runLogMaxChars),
+        HLSP_RUN_INLINE_FAILURE_DIAGNOSTICS: String(runInlineFailureDiagnostics),
+        HLSP_OUTLINE_GROUP_MODE: outlineGroupMode,
+        HLSP_OUTLINE_SORT_MODE: outlineSortMode,
+        HLSP_VARIABLE_INLAY_HINTS_ENABLED: String(variableInlayHintsEnabled),
+        HLSP_VARIABLE_INLAY_HINTS_MAX_LENGTH: String(variableInlayHintsMaxLength),
       },
     },
   };
@@ -241,10 +243,10 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
     client.onNotification("hurl/curlResult", async (raw: unknown) => {
       if (!isCurlResult(raw)) { appendRuntimeLog("Ignored invalid hurl/curlResult payload."); return; }
       inspector?.acceptCurl(raw);
-      if (raw.ok && raw.command) {
+      if (raw.ok && raw.command && raw.copyToClipboard) {
         await vscode.env.clipboard.writeText(raw.command);
         void vscode.window.showInformationMessage("cURL copied to clipboard");
-      } else if (raw.error) {
+      } else if (raw.error && raw.copyToClipboard) {
         void vscode.window.showWarningMessage("Unable to copy cURL — open Hurl Inspector for details.");
       }
     }),

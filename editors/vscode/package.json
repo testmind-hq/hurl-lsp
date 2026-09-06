@@ -3,6 +3,7 @@
   "displayName": "Hurl LSP",
   "description": "VSCode support for Hurl powered by hurl-lsp",
   "version": "0.2.1",
+  "hurlLspVersion": "0.2.0",
   "publisher": "testmind-hq",
   "icon": "media/icon.png",
   "galleryBanner": {

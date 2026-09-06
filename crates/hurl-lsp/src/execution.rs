@@ -2,7 +2,7 @@ use crate::syntax::{method_from_line, section_name_from_line};
 use crate::{
     protocol::{
         BodyContent, FailedAssertion, HeaderField, HttpExchange, HttpRequestData, HttpResponseData,
-        RunResult,
+        HttpTimings, RunResult,
     },
     variables::is_sensitive_name,
 };
@@ -134,6 +134,7 @@ pub fn parse_hurl_report_result(
                 .and_then(|v| v.get("total"))
                 .and_then(Value::as_u64)
                 .map(|micros| micros / 1000);
+            let timings = call.get("timings").and_then(parse_http_timings);
             result.exchanges.push(HttpExchange {
                 request: HttpRequestData {
                     method: request
@@ -147,7 +148,13 @@ pub fn parse_hurl_report_result(
                         .unwrap_or("")
                         .into(),
                     headers: parse_headers(request.get("headers")),
-                    body: read_body(request.get("body"), request.get("headers"), report_root),
+                    body: read_body(request.get("body"), request.get("headers"), report_root)
+                        .or_else(|| {
+                            read_request_body_from_curl(
+                                entry.get("curl_cmd"),
+                                request.get("headers"),
+                            )
+                        }),
                 },
                 response: response.map(|response| HttpResponseData {
                     version: response
@@ -162,6 +169,7 @@ pub fn parse_hurl_report_result(
                     body: read_body(response.get("body"), response.get("headers"), report_root),
                 }),
                 duration_ms,
+                timings,
             });
         }
     }
@@ -169,6 +177,34 @@ pub fn parse_hurl_report_result(
         result.started_at = "unknown".into();
     }
     result
+}
+
+fn parse_http_timings(value: &Value) -> Option<HttpTimings> {
+    let total = value.get("total")?.as_u64()?;
+    let name_lookup = value
+        .get("name_lookup")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let connect = value
+        .get("connect")
+        .and_then(Value::as_u64)
+        .unwrap_or(name_lookup);
+    let app_connect = value
+        .get("app_connect")
+        .and_then(Value::as_u64)
+        .unwrap_or(connect);
+    let start_transfer = value
+        .get("start_transfer")
+        .and_then(Value::as_u64)
+        .unwrap_or(app_connect);
+    Some(HttpTimings {
+        dns_ms: name_lookup / 1000,
+        tcp_ms: connect.saturating_sub(name_lookup) / 1000,
+        tls_ms: app_connect.saturating_sub(connect) / 1000,
+        ttfb_ms: start_transfer.saturating_sub(app_connect.max(connect)) / 1000,
+        download_ms: total.saturating_sub(start_transfer) / 1000,
+        total_ms: total / 1000,
+    })
 }
 
 fn parse_headers(value: Option<&Value>) -> Vec<HeaderField> {
@@ -225,6 +261,76 @@ fn read_body(
             truncated: original_bytes > BODY_LIMIT,
         }),
     }
+}
+
+fn read_request_body_from_curl(
+    curl_command: Option<&Value>,
+    headers: Option<&Value>,
+) -> Option<BodyContent> {
+    let command = curl_command.and_then(Value::as_str)?;
+    let argument = ["--data-raw ", "--data-binary ", "--data "]
+        .iter()
+        .find_map(|flag| {
+            command
+                .find(flag)
+                .map(|index| &command[index + flag.len()..])
+        })?;
+    let text = parse_shell_argument(argument.trim_start())?;
+    if text.starts_with('@') {
+        return None;
+    }
+    let original_bytes = text.len();
+    let mut shown_bytes = original_bytes.min(BODY_LIMIT);
+    while !text.is_char_boundary(shown_bytes) {
+        shown_bytes -= 1;
+    }
+    let truncated = shown_bytes < original_bytes;
+    let text = text[..shown_bytes].to_string();
+    let media_type = parse_headers(headers)
+        .into_iter()
+        .find(|header| header.name.eq_ignore_ascii_case("content-type"))
+        .map(|header| header.value);
+    Some(BodyContent {
+        text: Some(text),
+        media_type,
+        encoding: "utf8".into(),
+        original_bytes,
+        truncated,
+    })
+}
+
+fn parse_shell_argument(input: &str) -> Option<String> {
+    if let Some(rest) = input.strip_prefix("$'") {
+        return decode_ansi_c_string(rest);
+    }
+    if let Some(rest) = input.strip_prefix('\'') {
+        return rest.find('\'').map(|end| rest[..end].to_string());
+    }
+    let end = input.find(char::is_whitespace).unwrap_or(input.len());
+    (!input[..end].is_empty()).then(|| input[..end].to_string())
+}
+
+fn decode_ansi_c_string(input: &str) -> Option<String> {
+    let mut output = String::new();
+    let mut chars = input.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\'' => return Some(output),
+            '\\' => {
+                let escaped = chars.next()?;
+                output.push(match escaped {
+                    'n' => '\n',
+                    'r' => '\r',
+                    't' => '\t',
+                    'b' => '\u{0008}',
+                    'f' => '\u{000c}',
+                    other => other,
+                });
+            }
+            other => output.push(other),
+        }
+    }
+    None
 }
 
 pub fn execution_diagnostics_for_result(line: u32, success: bool, detail: &str) -> Vec<Diagnostic> {
@@ -424,7 +530,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("hurl-lsp-report-{}", std::process::id()));
         fs::create_dir_all(root.join("store")).expect("mkdir");
         fs::write(root.join("store/body.json"), "{\"ok\":true}").expect("body");
-        fs::write(root.join("report.json"), r#"[{"success":true,"time":12,"entries":[{"asserts":[],"calls":[{"request":{"method":"GET","url":"https://example.com","headers":[{"name":"Authorization","value":"Bearer token"}]},"response":{"http_version":"HTTP/2","status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":"store/body.json"},"timings":{"begin_call":"2026-09-05T00:00:00Z","total":4300}}]}]}]"#).expect("report");
+        fs::write(root.join("report.json"), r#"[{"success":true,"time":15,"entries":[{"asserts":[],"curl_cmd":"curl --data $'{\"name\":\"O\\'Brien\"}\\n' 'https://example.com'","calls":[{"request":{"method":"POST","url":"https://example.com","headers":[{"name":"Authorization","value":"Bearer token"},{"name":"Content-Type","value":"application/json"}]},"response":{"http_version":"HTTP/2","status":200,"headers":[{"name":"Content-Type","value":"application/json"}],"body":"store/body.json"},"timings":{"begin_call":"2026-09-05T00:00:00Z","name_lookup":1000,"connect":3000,"app_connect":8000,"start_transfer":12000,"total":15000}}]}]}]"#).expect("report");
         let uri = Url::parse("file:///tmp/a.hurl").expect("uri");
         let result = parse_hurl_report_result(
             RunResultContext {
@@ -439,7 +545,13 @@ mod tests {
             b"",
             b"",
         );
-        assert_eq!(result.duration_ms, Some(12));
+        assert_eq!(result.duration_ms, Some(15));
+        let timings = result.exchanges[0].timings.as_ref().expect("timings");
+        assert_eq!((timings.dns_ms, timings.tcp_ms, timings.tls_ms), (1, 2, 5));
+        assert_eq!(
+            (timings.ttfb_ms, timings.download_ms, timings.total_ms),
+            (4, 3, 15)
+        );
         assert_eq!(
             result.exchanges[0].response.as_ref().and_then(|r| r.status),
             Some(200)
@@ -453,6 +565,14 @@ mod tests {
             Some("{\"ok\":true}")
         );
         assert!(result.exchanges[0].request.headers[0].sensitive);
+        assert_eq!(
+            result.exchanges[0]
+                .request
+                .body
+                .as_ref()
+                .and_then(|body| body.text.as_deref()),
+            Some("{\"name\":\"O'Brien\"}\n")
+        );
         let _ = fs::remove_dir_all(root);
     }
 

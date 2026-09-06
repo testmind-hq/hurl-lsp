@@ -25,7 +25,8 @@ struct OutlineConfig {
 
 impl OutlineConfig {
     fn from_env() -> Self {
-        let group_mode = match std::env::var("HURL_OUTLINE_GROUP_MODE")
+        let group_mode = match std::env::var("HLSP_OUTLINE_GROUP_MODE")
+            .or_else(|_| std::env::var("HURL_OUTLINE_GROUP_MODE"))
             .unwrap_or_else(|_| "hierarchical".to_string())
             .to_ascii_lowercase()
             .as_str()
@@ -33,7 +34,8 @@ impl OutlineConfig {
             "flat" => OutlineGroupMode::Flat,
             _ => OutlineGroupMode::Hierarchical,
         };
-        let sort_mode = match std::env::var("HURL_OUTLINE_SORT_MODE")
+        let sort_mode = match std::env::var("HLSP_OUTLINE_SORT_MODE")
+            .or_else(|_| std::env::var("HURL_OUTLINE_SORT_MODE"))
             .unwrap_or_else(|_| "source".to_string())
             .to_ascii_lowercase()
             .as_str()
