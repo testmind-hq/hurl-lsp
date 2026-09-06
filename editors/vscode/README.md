@@ -8,6 +8,38 @@ The extension registers the `hurl` language, starts a local language server, and
 
 This project is under active development. Feedback and issues are welcome at [testmind-hq/hurl-lsp](https://github.com/testmind-hq/hurl-lsp/issues).
 
+## Installation
+
+### 1. Install this extension
+
+- From VS Marketplace: search **Hurl LSP** (`testmind-hq.vscode-hurl`)
+- Or install a `.vsix` from [GitHub Releases](https://github.com/testmind-hq/hurl-lsp/releases)
+
+Open any `.hurl` file. The extension starts `hurl-lsp` automatically.
+
+### 2. Install the `hurl-lsp` language server
+
+Most users can skip this. On first activation the extension downloads a matching binary from GitHub Releases for macOS, Linux x64, and Windows x64.
+
+To install the server yourself:
+
+```sh
+# Cargo
+cargo install hurl-lsp
+
+# Homebrew
+brew tap testmind-hq/tap
+brew install hurl-lsp
+```
+
+Pre-built archives: [Releases](https://github.com/testmind-hq/hurl-lsp/releases).
+
+If the binary is not on `PATH`, set `hurl.server.path` to its absolute path. A `PATH` binary is reused only when its version is at least this extension's version.
+
+### 3. Optional: install the `hurl` CLI
+
+CodeLens **Run** / **Run chain** / **Run file** need [`hurl`](https://hurl.dev/docs/installation.html) on `PATH`. Completions, diagnostics, hover, and formatting work without it.
+
 ## Features
 
 - **Syntax highlighting** and snippets for `.hurl` files
@@ -22,32 +54,21 @@ This project is under active development. Feedback and issues are welcome at [te
 - **Inspector** side panel for request, chain, result, and cURL preview
 - **Export as Markdown** for the current `.hurl` file
 
-Running requests needs a `hurl` CLI on `PATH`. Language features work from the bundled language server alone.
+## Language server lookup
 
-## Requirements
-
-- VS Code 1.90 or later
-- Optional: [Hurl](https://hurl.dev/docs/installation.html) CLI, for CodeLens Run actions
-- Optional: `openapi.yaml` / `swagger.json` in the workspace, for path and request-body completions
-
-## Language server binary
-
-Resolution order:
+When the extension starts, it picks a binary in this order:
 
 1. `hurl.server.path` if set
 2. `hurl-lsp` on `PATH` when its version is at least this extension's version
 3. Auto-download from GitHub Releases
 
-Auto-download targets:
-
-- `aarch64-apple-darwin`
-- `x86_64-apple-darwin`
-- `x86_64-unknown-linux-gnu`
-- `x86_64-pc-windows-msvc`
+Auto-download targets: `aarch64-apple-darwin`, `x86_64-apple-darwin`, `x86_64-unknown-linux-gnu`, `x86_64-pc-windows-msvc`.
 
 Use **Hurl: Show Log** if the server fails to start.
 
 Workspace variable files: `.hurl-vars`, `vars.env`, `hurl.env`, `.env`.
+
+OpenAPI path completions need `openapi.yaml` / `swagger.json` in the workspace.
 
 ## Commands
 
