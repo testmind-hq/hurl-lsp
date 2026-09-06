@@ -16,6 +16,7 @@
 
 - Add a Marketplace icon: geometric `hurl` wordmark in official Hurl pink
 - Add a Marketplace README and LICENSE to the VSCode extension package, including hurl-lsp install steps
+- Publish the VSCode extension to Open VSX for VSCodium
 
 ## 0.1.13 - 2026-05-08
 

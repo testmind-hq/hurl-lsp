@@ -12,7 +12,8 @@ This project is under active development. Feedback and issues are welcome at [te
 
 ### 1. Install this extension
 
-- From VS Marketplace: search **Hurl LSP** (`testmind-hq.vscode-hurl`)
+- **VS Code:** Marketplace search **Hurl LSP** (`testmind-hq.vscode-hurl`)
+- **VSCodium / Open VSX:** Extensions view search **Hurl LSP**, or install from [open-vsx.org/extension/testmind-hq/vscode-hurl](https://open-vsx.org/extension/testmind-hq/vscode-hurl)
 - Or install a `.vsix` from [GitHub Releases](https://github.com/testmind-hq/hurl-lsp/releases)
 
 Open any `.hurl` file. The extension starts `hurl-lsp` automatically.

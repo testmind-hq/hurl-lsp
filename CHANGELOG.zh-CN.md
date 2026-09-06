@@ -16,6 +16,7 @@
 
 - 增加 Marketplace 图标：几何 stroke `hurl` wordmark，官方粉
 - 为 VSCode 扩展包补充 Marketplace README 和 LICENSE，并写明 hurl-lsp 安装步骤
+- 将 VSCode 扩展同步发布到 Open VSX，供 VSCodium 安装
 
 ## 0.1.13 - 2026-05-08
 
