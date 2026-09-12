@@ -42,6 +42,7 @@
     "onCommand:hurl.formatDocument",
     "onCommand:hurl.exportAsMarkdown",
     "onCommand:hurl.clearRunAlerts",
+    "onCommand:hurl.selectEnvironmentProfile",
     "onView:hurlRequests"
   ],
   "main": "./out/extension.js",
@@ -208,6 +209,10 @@
       {
         "command": "hurl.clearRunAlerts",
         "title": "Hurl: Clear Run Alerts"
+      },
+      {
+        "command": "hurl.selectEnvironmentProfile",
+        "title": "Hurl: Select Environment Profile"
       },
       {
         "command": "hurl.outline.runEntry",

@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions } from "vscode-languageclient/node";
 import { Trace } from "vscode-jsonrpc";
 import { ensureBinary } from "./download";
+import { EnvironmentProfileController } from "./environmentProfiles";
 import { exportActiveHurlAsMarkdown } from "./markdownExport";
 import { HurlOutlineProvider } from "./outlineView";
 import { InspectorController, registerWebviewPanel } from "./webviewPanel";
@@ -13,11 +14,14 @@ let requestLogChannel: vscode.OutputChannel | undefined;
 let logNotificationDisposable: vscode.Disposable | undefined;
 let resultNotificationDisposables: vscode.Disposable[] = [];
 let inspector: InspectorController | undefined;
+let environmentProfiles: EnvironmentProfileController | undefined;
 const REQUEST_LOG_PREFIX = "[hurl-request] ";
 let requestRuns: string[] = [];
 let activeRunIndex = -1;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  environmentProfiles = new EnvironmentProfileController(context);
+  context.subscriptions.push(environmentProfiles);
   const variableWatcher = vscode.workspace.createFileSystemWatcher("**/{.hurl-vars,vars.env,hurl.env,.env}");
   const notifyVariableFileChange = (uri: vscode.Uri, type: vscode.FileChangeType) => {
     void client?.sendNotification("workspace/didChangeWatchedFiles", {
