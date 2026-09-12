@@ -19,7 +19,10 @@ export class EnvironmentProfileController implements vscode.Disposable {
       vscode.commands.registerCommand("hurl.selectEnvironmentProfile", () => this.selectForActiveEditor()),
       vscode.window.onDidChangeActiveTextEditor(() => this.refresh()),
       vscode.workspace.onDidChangeConfiguration((event) => {
-        if (event.affectsConfiguration("hurl.environment")) this.refresh();
+        if (event.affectsConfiguration("hurl.environment")) {
+          this.refresh();
+          this.notifyAll();
+        }
       }),
     );
     this.refresh();
@@ -33,6 +36,13 @@ export class EnvironmentProfileController implements vscode.Disposable {
     const defaultProfile = config.get<string>("environment.defaultProfile", AUTO_PROFILE);
     const selected = this.context.workspaceState.get<string>(`${STATE_PREFIX}${folder.uri.toString()}`);
     return resolveActiveProfile(folder.uri.toString(), selected ? { [folder.uri.toString()]: selected } : {}, defaultProfile, profiles);
+  }
+
+  descriptors(): Array<{ workspaceUri: string; name: string; files: string[] }> {
+    return (vscode.workspace.workspaceFolders ?? []).map((folder) => ({
+      workspaceUri: folder.uri.toString(),
+      ...this.activeFor(folder.uri),
+    }));
   }
 
   async selectForActiveEditor(): Promise<void> {
@@ -69,6 +79,12 @@ export class EnvironmentProfileController implements vscode.Disposable {
     const profile = this.activeFor(editor.document.uri);
     this.statusBar.text = `$(server-environment) Hurl: ${profile.name}`;
     this.statusBar.show();
+  }
+
+  private notifyAll(): void {
+    for (const descriptor of this.descriptors()) {
+      this.emitter.fire({ folderUri: descriptor.workspaceUri, profile: { name: descriptor.name, files: descriptor.files } });
+    }
   }
 
   dispose(): void {

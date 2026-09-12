@@ -22,6 +22,7 @@ pub struct ResolvedVariable {
 
 pub type VariableDef = ResolvedVariable;
 
+#[cfg(test)]
 pub fn load_workspace_variables_with_roots(
     document_uri: &Url,
     workspace_roots: &[PathBuf],

@@ -24,6 +24,7 @@ export type RunResult = {
 export type CurlResult = {
   uri: string; documentVersion: number; entryLine: number; ok: boolean;
   command?: string; displayCommand?: string; unresolvedVariables: string[]; error?: string; copyToClipboard?: boolean;
+  profileName?: string; profileSources?: string[];
 };
 
 const record = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;

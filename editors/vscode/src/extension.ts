@@ -54,6 +54,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
   );
   inspector = registerWebviewPanel(context, appendRuntimeLog);
+  context.subscriptions.push(environmentProfiles.onDidChange(() => {
+    void syncEnvironmentProfiles();
+    inspector?.refresh();
+  }));
   runtimeLogChannel = vscode.window.createOutputChannel("Hurl Runtime Log");
   requestLogChannel = vscode.window.createOutputChannel("Hurl Request Log");
   context.subscriptions.push(runtimeLogChannel);
@@ -265,10 +269,19 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
   context.subscriptions.push(...resultNotificationDisposables);
 
   await client.start();
+  await syncEnvironmentProfiles();
   client.setTrace(toTrace(traceSetting));
   appendRuntimeLog(
     `Language client started (trace=${traceSetting}, runVerbosity=${runVerbosity}, runTimeoutSeconds=${runTimeoutSeconds}, runLogMaxChars=${runLogMaxChars}, inlineFailureDiagnostics=${runInlineFailureDiagnostics}, outlineGroupMode=${outlineGroupMode}, outlineSortMode=${outlineSortMode}, variableInlayHints=${variableInlayHintsEnabled}, variableInlayMaxLength=${variableInlayHintsMaxLength}).`,
   );
+}
+
+async function syncEnvironmentProfiles(): Promise<void> {
+  if (!client || !environmentProfiles) return;
+  await client.sendRequest("workspace/executeCommand", {
+    command: "hurl.setEnvironmentProfiles",
+    arguments: [environmentProfiles.descriptors()],
+  });
 }
 
 function toTrace(value: string): Trace {

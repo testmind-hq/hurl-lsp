@@ -14,6 +14,7 @@ pub const COPY_AS_CURL_COMMAND: &str = "hurl.copyAsCurl";
 pub const PREVIEW_CURL_COMMAND: &str = "hurl.previewCurl";
 pub const CLEAR_RUN_DIAGNOSTICS_COMMAND: &str = "hurl.clearRunDiagnostics";
 pub const CANCEL_RUN_COMMAND: &str = "hurl.cancelRun";
+pub const SET_ENVIRONMENT_PROFILES_COMMAND: &str = "hurl.setEnvironmentProfiles";
 pub const NOOP_COMMAND: &str = "hurl.noop";
 
 #[cfg(test)]

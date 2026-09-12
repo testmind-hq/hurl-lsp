@@ -162,6 +162,10 @@ pub struct CurlResult {
     pub display_command: Option<String>,
     pub unresolved_variables: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_name: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub profile_sources: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub copy_to_clipboard: bool,
 }
@@ -198,6 +202,8 @@ mod tests {
             command: None,
             display_command: None,
             unresolved_variables: vec!["token".into()],
+            profile_name: Some("Local".into()),
+            profile_sources: vec!["vars.local.env".into()],
             error: Some("missing".into()),
             copy_to_clipboard: false,
         };

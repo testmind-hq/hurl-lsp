@@ -1,13 +1,46 @@
 use crate::variables::{resolve_variable_files, resolve_workspace_variables, ResolvedVariable};
+use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
 use tower_lsp::lsp_types::Url;
 
 pub const AUTO_PROFILE: &str = "Auto";
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProfileConfig {
     pub name: String,
     pub files: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceProfileSelection {
+    pub workspace_uri: String,
+    pub name: String,
+    pub files: Vec<String>,
+}
+
+pub fn selected_profile_for_document(
+    document_uri: &Url,
+    selections: &[WorkspaceProfileSelection],
+) -> Option<ProfileConfig> {
+    let document = document_uri.to_file_path().ok()?;
+    selections
+        .iter()
+        .filter_map(|selection| {
+            let root = Url::parse(&selection.workspace_uri)
+                .ok()?
+                .to_file_path()
+                .ok()?;
+            document
+                .starts_with(&root)
+                .then_some((root.components().count(), selection))
+        })
+        .max_by_key(|(depth, _)| *depth)
+        .map(|(_, selection)| ProfileConfig {
+            name: selection.name.clone(),
+            files: selection.files.clone(),
+        })
 }
 
 #[derive(Clone, Debug, Default)]
@@ -153,6 +186,29 @@ mod tests {
         .expect_err("outside file must fail");
         assert!(error.contains("inside the workspace"));
         let _ = fs::remove_dir_all(parent);
+    }
+
+    #[test]
+    fn selects_the_nearest_workspace_profile() {
+        let selections = vec![
+            WorkspaceProfileSelection {
+                workspace_uri: "file:///workspace".into(),
+                name: "Root".into(),
+                files: vec![],
+            },
+            WorkspaceProfileSelection {
+                workspace_uri: "file:///workspace/api".into(),
+                name: "API".into(),
+                files: vec!["api.env".into()],
+            },
+        ];
+        let selected = selected_profile_for_document(
+            &Url::parse("file:///workspace/api/test.hurl").unwrap(),
+            &selections,
+        )
+        .unwrap();
+        assert_eq!(selected.name, "API");
+        assert_eq!(selected.files, vec!["api.env"]);
     }
 
     fn tmp_dir(prefix: &str) -> PathBuf {

@@ -72,7 +72,8 @@ function curlView(snapshot: InspectorSnapshot, model: DocumentViewModel | undefi
   }
   if (!value.ok) return `<section class="card"><h3>Unable to build cURL</h3><div class="fail">${escapeHtml(value.error ?? "Unknown error")}</div>${value.unresolvedVariables.length ? `<p>Unresolved: ${escapeHtml(value.unresolvedVariables.join(", "))}</p>` : ""}${generateButton}</section>`;
   const shown = snapshot.revealSecrets ? value.command : (value.displayCommand ?? value.command);
-  return `<div class="toolbar"><button data-type="toggle-secrets">${snapshot.revealSecrets ? "Hide secrets" : "Reveal secrets"}</button><button data-type="copy-curl">Copy cURL</button>${generateButton}</div><pre>${escapeHtml(shown ?? "")}</pre>`;
+  const profile = value.profileName ? `<div class="muted">Environment: ${escapeHtml(value.profileName)}${value.profileSources?.length ? ` · ${escapeHtml(value.profileSources.join(" → "))}` : ""}</div>` : "";
+  return `<div class="toolbar"><button data-type="toggle-secrets">${snapshot.revealSecrets ? "Hide secrets" : "Reveal secrets"}</button><button data-type="copy-curl">Copy cURL</button>${generateButton}</div>${profile}<pre>${escapeHtml(shown ?? "")}</pre>`;
 }
 
 export function renderInspectorHtml(webview: WebviewLike, model: DocumentViewModel | undefined, snapshot: InspectorSnapshot): string {
