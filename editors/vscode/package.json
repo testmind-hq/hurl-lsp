@@ -125,6 +125,13 @@
           "default": true,
           "description": "Show inline red diagnostics when Run/Run Chain execution fails."
         },
+        "hurl.run.timeoutSeconds": {
+          "type": "number",
+          "default": 30,
+          "minimum": 0,
+          "maximum": 3600,
+          "description": "Maximum execution time in seconds. Set to 0 to disable the timeout."
+        },
         "hurl.variables.inlayHints.enabled": {
           "type": "boolean",
           "default": true,

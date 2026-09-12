@@ -12,6 +12,7 @@ mod metadata;
 mod openapi;
 mod profiles;
 mod protocol;
+mod runner;
 mod symbols;
 mod syntax;
 mod variables;

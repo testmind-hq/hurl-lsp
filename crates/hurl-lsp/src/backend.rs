@@ -1,8 +1,8 @@
 use crate::{
     code_lens::{
-        code_lenses_with_context, extract_entry_text, CLEAR_RUN_DIAGNOSTICS_COMMAND,
-        COPY_AS_CURL_COMMAND, NOOP_COMMAND, PREVIEW_CURL_COMMAND, RUN_CHAIN_COMMAND,
-        RUN_ENTRY_COMMAND, RUN_ENTRY_WITH_VARS_COMMAND, RUN_FILE_COMMAND,
+        code_lenses_with_context, extract_entry_text, CANCEL_RUN_COMMAND,
+        CLEAR_RUN_DIAGNOSTICS_COMMAND, COPY_AS_CURL_COMMAND, NOOP_COMMAND, PREVIEW_CURL_COMMAND,
+        RUN_CHAIN_COMMAND, RUN_ENTRY_COMMAND, RUN_ENTRY_WITH_VARS_COMMAND, RUN_FILE_COMMAND,
     },
     completion::completions_with_external,
     curl::{build_curl_for_entry, CurlBuildError},
@@ -20,7 +20,11 @@ use crate::{
         load_openapi_paths_with_roots, load_openapi_request_body_fields_with_roots,
         load_openapi_response_fields_with_roots,
     },
-    protocol::{CurlResult, CurlResultNotification, RunResultNotification},
+    protocol::{
+        CurlResult, CurlResultNotification, RunPhaseTimings, RunResult, RunResultNotification,
+        RunTaskState, RunTaskUpdate, RunTaskUpdateNotification,
+    },
+    runner::{execute as execute_hurl, RunOutcome, RunTaskRegistry},
     symbols::document_symbols,
     syntax::method_from_line,
     variables::{
@@ -34,6 +38,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tempfile::NamedTempFile;
 use tokio::process::Command as TokioCommand;
 use tokio::sync::RwLock;
@@ -80,6 +85,7 @@ pub struct Backend {
     execution_diagnostics: DashMap<Url, Vec<Diagnostic>>,
     execution_summaries: DashMap<Url, BTreeMap<u32, RunSummary>>,
     workspace_roots: Arc<RwLock<Vec<PathBuf>>>,
+    run_tasks: RunTaskRegistry,
 }
 
 impl Backend {
@@ -90,6 +96,7 @@ impl Backend {
             execution_diagnostics: DashMap::new(),
             execution_summaries: DashMap::new(),
             workspace_roots: Arc::new(RwLock::new(Vec::new())),
+            run_tasks: RunTaskRegistry::default(),
         }
     }
 
@@ -127,6 +134,62 @@ impl Backend {
             .log_message(MessageType::INFO, format!("{REQUEST_LOG_PREFIX}{text}"))
             .await;
     }
+
+    async fn notify_run_task(
+        &self,
+        task_id: &str,
+        uri: &Url,
+        document_version: i32,
+        line: u32,
+        target: &str,
+        state: RunTaskState,
+        started_at: &str,
+        started: Instant,
+        message: Option<String>,
+    ) {
+        self.client
+            .send_notification::<RunTaskUpdateNotification>(RunTaskUpdate {
+                task_id: task_id.into(),
+                uri: uri.to_string(),
+                document_version,
+                entry_line: line,
+                target: target.into(),
+                state,
+                started_at: started_at.into(),
+                elapsed_ms: started.elapsed().as_millis() as u64,
+                profile_name: None,
+                message,
+                stdout: None,
+                stderr: None,
+            })
+            .await;
+    }
+}
+
+fn timestamp_now() -> String {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .to_string()
+}
+
+fn decorate_run_result(
+    mut result: RunResult,
+    task_id: &str,
+    prepare_ms: u64,
+    process_ms: u64,
+    report_ms: u64,
+    total_ms: u64,
+) -> RunResult {
+    result.task_id = Some(task_id.into());
+    result.phase_timings = Some(RunPhaseTimings {
+        prepare_ms,
+        process_ms,
+        report_ms,
+        total_ms,
+    });
+    result
 }
 
 fn apply_document_change(
@@ -258,6 +321,7 @@ impl LanguageServer for Backend {
                         COPY_AS_CURL_COMMAND.to_string(),
                         PREVIEW_CURL_COMMAND.to_string(),
                         CLEAR_RUN_DIAGNOSTICS_COMMAND.to_string(),
+                        CANCEL_RUN_COMMAND.to_string(),
                         NOOP_COMMAND.to_string(),
                     ],
                     work_done_progress_options: WorkDoneProgressOptions::default(),
@@ -472,6 +536,12 @@ impl LanguageServer for Backend {
         if params.command == NOOP_COMMAND {
             return Ok(None);
         }
+        if params.command == CANCEL_RUN_COMMAND {
+            let task_id = params.arguments.first().and_then(|value| value.as_str());
+            return Ok(Some(serde_json::Value::Bool(
+                task_id.is_some_and(|id| self.run_tasks.cancel(id)),
+            )));
+        }
         if params.command != RUN_ENTRY_COMMAND
             && params.command != RUN_ENTRY_WITH_VARS_COMMAND
             && params.command != RUN_CHAIN_COMMAND
@@ -479,6 +549,7 @@ impl LanguageServer for Backend {
             && params.command != COPY_AS_CURL_COMMAND
             && params.command != PREVIEW_CURL_COMMAND
             && params.command != CLEAR_RUN_DIAGNOSTICS_COMMAND
+            && params.command != CANCEL_RUN_COMMAND
         {
             return Ok(None);
         }
@@ -570,6 +641,9 @@ impl LanguageServer for Backend {
         let Some((text, document_version)) = self.documents.snapshot(&uri) else {
             return Ok(None);
         };
+        let task_id = self.run_tasks.next_id();
+        let task_started = Instant::now();
+        let started_at = timestamp_now();
         let run_target = if params.command == RUN_FILE_COMMAND {
             "file"
         } else if params.command == RUN_CHAIN_COMMAND {
@@ -613,6 +687,18 @@ impl LanguageServer for Backend {
             };
             value
         };
+        self.notify_run_task(
+            &task_id,
+            &uri,
+            document_version,
+            line as u32,
+            run_target,
+            RunTaskState::Queued,
+            &started_at,
+            task_started,
+            None,
+        )
+        .await;
         let temp_file = uri.to_file_path().ok().and_then(|path| {
             path.parent()
                 .map(|parent| tempfile::Builder::new().suffix(".hurl").tempfile_in(parent))
@@ -722,6 +808,7 @@ impl LanguageServer for Backend {
             "HURL_RUN_VERBOSITY",
             "HURL_RUN_LOG_MAX_CHARS",
             "HURL_RUN_INLINE_FAILURE_DIAGNOSTICS",
+            "HURL_RUN_TIMEOUT_SECONDS",
             "HURL_OUTLINE_GROUP_MODE",
             "HURL_OUTLINE_SORT_MODE",
             "HURL_OUTLINE_MAX_ENTRIES",
@@ -732,11 +819,27 @@ impl LanguageServer for Backend {
             cmd.env_remove(key);
         }
 
-        let output = cmd.output().await;
+        let prepare_ms = task_started.elapsed().as_millis() as u64;
+        let cancellation = self.run_tasks.register(&task_id);
+        self.notify_run_task(
+            &task_id,
+            &uri,
+            document_version,
+            line as u32,
+            run_target,
+            RunTaskState::Running,
+            &started_at,
+            task_started,
+            None,
+        )
+        .await;
+        let timeout = run_timeout();
+        let output = execute_hurl(&mut cmd, cancellation, timeout).await;
+        self.run_tasks.finish(&task_id);
         drop(merged_vars_file);
         let request_log_limit = request_log_max_chars();
         match output {
-            Ok(output) if output.status.success() => {
+            Ok(output) if output.outcome == RunOutcome::Completed && output.status.success() => {
                 self.execution_diagnostics.remove(&uri);
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -762,6 +865,7 @@ impl LanguageServer for Backend {
                 }
                 self.log_execution(format!("hurl run succeeded ({run_target}) for {}", uri))
                     .await;
+                let report_started = Instant::now();
                 let result = parse_hurl_report_result(
                     RunResultContext {
                         uri: &uri,
@@ -775,15 +879,43 @@ impl LanguageServer for Backend {
                     &output.stdout,
                     &output.stderr,
                 );
+                let report_ms = report_started.elapsed().as_millis() as u64;
+                let result = decorate_run_result(
+                    result,
+                    &task_id,
+                    prepare_ms,
+                    output.process_ms,
+                    report_ms,
+                    task_started.elapsed().as_millis() as u64,
+                );
                 self.client
                     .send_notification::<RunResultNotification>(result)
                     .await;
+                self.notify_run_task(
+                    &task_id,
+                    &uri,
+                    document_version,
+                    line as u32,
+                    run_target,
+                    RunTaskState::Succeeded,
+                    &started_at,
+                    task_started,
+                    None,
+                )
+                .await;
                 self.publish_diagnostics(uri, &text).await;
             }
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let stdout = String::from_utf8_lossy(&output.stdout);
-                let detail = if stderr.trim().is_empty() {
+                let detail = if output.outcome == RunOutcome::Cancelled {
+                    "Run cancelled by user.".to_string()
+                } else if output.outcome == RunOutcome::TimedOut {
+                    format!(
+                        "Run timed out after {} seconds.",
+                        timeout.map(|value| value.as_secs()).unwrap_or_default()
+                    )
+                } else if stderr.trim().is_empty() {
                     format!("exit status: {}", output.status)
                 } else {
                     truncate_message(stderr.as_ref())
@@ -822,6 +954,7 @@ impl LanguageServer for Backend {
                     uri, detail
                 ))
                 .await;
+                let report_started = Instant::now();
                 let result = parse_hurl_report_result(
                     RunResultContext {
                         uri: &uri,
@@ -835,12 +968,40 @@ impl LanguageServer for Backend {
                     &output.stdout,
                     &output.stderr,
                 );
+                let report_ms = report_started.elapsed().as_millis() as u64;
+                let result = decorate_run_result(
+                    result,
+                    &task_id,
+                    prepare_ms,
+                    output.process_ms,
+                    report_ms,
+                    task_started.elapsed().as_millis() as u64,
+                );
                 self.client
                     .send_notification::<RunResultNotification>(result)
                     .await;
-                self.client
-                    .show_message(MessageType::ERROR, format!("hurl run failed: {detail}"))
-                    .await;
+                let terminal_state = match output.outcome {
+                    RunOutcome::Cancelled => RunTaskState::Cancelled,
+                    RunOutcome::TimedOut => RunTaskState::TimedOut,
+                    RunOutcome::Completed => RunTaskState::Failed,
+                };
+                self.notify_run_task(
+                    &task_id,
+                    &uri,
+                    document_version,
+                    line as u32,
+                    run_target,
+                    terminal_state,
+                    &started_at,
+                    task_started,
+                    Some(detail.clone()),
+                )
+                .await;
+                if output.outcome == RunOutcome::Completed {
+                    self.client
+                        .show_message(MessageType::ERROR, format!("hurl run failed: {detail}"))
+                        .await;
+                }
                 self.publish_diagnostics(uri, &text).await;
             }
             Err(error) => {
@@ -873,6 +1034,7 @@ impl LanguageServer for Backend {
                     uri, error
                 ))
                 .await;
+                let report_started = Instant::now();
                 let result = parse_hurl_report_result(
                     RunResultContext {
                         uri: &uri,
@@ -886,9 +1048,30 @@ impl LanguageServer for Backend {
                     b"",
                     err_text.as_bytes(),
                 );
+                let report_ms = report_started.elapsed().as_millis() as u64;
+                let result = decorate_run_result(
+                    result,
+                    &task_id,
+                    prepare_ms,
+                    0,
+                    report_ms,
+                    task_started.elapsed().as_millis() as u64,
+                );
                 self.client
                     .send_notification::<RunResultNotification>(result)
                     .await;
+                self.notify_run_task(
+                    &task_id,
+                    &uri,
+                    document_version,
+                    line as u32,
+                    run_target,
+                    RunTaskState::Failed,
+                    &started_at,
+                    task_started,
+                    Some(err_text.clone()),
+                )
+                .await;
                 self.client
                     .show_message(
                         MessageType::ERROR,
@@ -926,6 +1109,14 @@ fn request_log_max_chars() -> Option<usize> {
         Some(v) => Some(v),
         None => Some(6000),
     }
+}
+
+fn run_timeout() -> Option<Duration> {
+    let seconds = env_with_legacy("HLSP_RUN_TIMEOUT_SECONDS", "HURL_RUN_TIMEOUT_SECONDS")
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(30)
+        .min(3600);
+    (seconds > 0).then(|| Duration::from_secs(seconds))
 }
 
 fn run_inline_failure_diagnostics_enabled() -> bool {
