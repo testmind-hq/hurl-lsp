@@ -12,6 +12,17 @@ export function normalizeProfiles(value: unknown): EnvironmentProfiles {
   return profiles;
 }
 
+export function profileWatchPaths(value: unknown): string[] {
+  const paths = Object.values(normalizeProfiles(value)).flat();
+  return [...new Set(paths.filter(isWorkspaceRelativePath))];
+}
+
+function isWorkspaceRelativePath(value: string): boolean {
+  const normalized = value.replace(/\\/g, "/");
+  if (normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized)) return false;
+  return !normalized.split("/").includes("..");
+}
+
 export function resolveActiveProfile(
   folderUri: string,
   selections: Readonly<Record<string, string>>,

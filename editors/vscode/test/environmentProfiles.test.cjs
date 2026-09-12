@@ -1,6 +1,6 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { AUTO_PROFILE, normalizeProfiles, resolveActiveProfile } = require("../out/environmentProfileModel.js");
+const { AUTO_PROFILE, normalizeProfiles, profileWatchPaths, resolveActiveProfile } = require("../out/environmentProfileModel.js");
 
 test("resolves selections independently for multiple workspace folders", () => {
   const profiles = { Local:["vars.env", "vars.local.env"], Staging:["vars.staging.env"] };
@@ -13,4 +13,12 @@ test("resolves selections independently for multiple workspace folders", () => {
 test("falls back to Auto for invalid configuration and stale selection", () => {
   assert.deepEqual(normalizeProfiles({ Good:["vars.env"], Bad:[1], EmptyName:[""] }), { Good:["vars.env"] });
   assert.deepEqual(resolveActiveProfile("file:///a", { "file:///a":"Missing" }, "Missing", { Local:["local.env"] }), { name:AUTO_PROFILE, files:[] });
+});
+
+test("watches arbitrary configured profile files once per workspace", () => {
+  assert.deepEqual(profileWatchPaths({
+    Local:["vars.env", "config/local.env"],
+    Staging:["staging.env", "vars.env"],
+    Invalid:["../outside.env", "/tmp/absolute.env", "C:\\absolute.env"],
+  }), ["vars.env", "config/local.env", "staging.env"]);
 });

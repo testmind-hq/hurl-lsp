@@ -945,10 +945,10 @@ impl LanguageServer for Backend {
             cmd.env_remove(key);
         }
 
+        let cancellation = self.run_tasks.register(&task.id);
         self.notify_run_task(&task, RunTaskState::Queued, None)
             .await;
         let prepare_ms = task.started.elapsed().as_millis() as u64;
-        let cancellation = self.run_tasks.register(&task.id);
         self.notify_run_task(&task, RunTaskState::Running, None)
             .await;
         let task_updates_done =

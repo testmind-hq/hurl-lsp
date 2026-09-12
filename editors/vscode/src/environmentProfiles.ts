@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { ActiveEnvironmentProfile, AUTO_PROFILE, normalizeProfiles, resolveActiveProfile } from "./environmentProfileModel";
+import { ActiveEnvironmentProfile, AUTO_PROFILE, normalizeProfiles, profileWatchPaths, resolveActiveProfile } from "./environmentProfileModel";
 
 const STATE_PREFIX = "hurl.environment.profile.";
 
@@ -7,9 +7,13 @@ export class EnvironmentProfileController implements vscode.Disposable {
   private readonly statusBar: vscode.StatusBarItem;
   private readonly emitter = new vscode.EventEmitter<{ folderUri: string; profile: ActiveEnvironmentProfile }>();
   private readonly disposables: vscode.Disposable[] = [];
+  private profileWatchers: vscode.Disposable[] = [];
   readonly onDidChange = this.emitter.event;
 
-  constructor(private readonly context: vscode.ExtensionContext) {
+  constructor(
+    private readonly context: vscode.ExtensionContext,
+    private readonly onVariableFileChange?: (uri: vscode.Uri, type: vscode.FileChangeType) => void,
+  ) {
     this.statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 90);
     this.statusBar.command = "hurl.selectEnvironmentProfile";
     this.statusBar.tooltip = "Select the Hurl environment profile for this workspace folder";
@@ -20,11 +24,18 @@ export class EnvironmentProfileController implements vscode.Disposable {
       vscode.window.onDidChangeActiveTextEditor(() => this.refresh()),
       vscode.workspace.onDidChangeConfiguration((event) => {
         if (event.affectsConfiguration("hurl.environment")) {
+          this.rebuildProfileWatchers();
           this.refresh();
           this.notifyAll();
         }
       }),
+      vscode.workspace.onDidChangeWorkspaceFolders(() => {
+        this.rebuildProfileWatchers();
+        this.refresh();
+        this.notifyAll();
+      }),
     );
+    this.rebuildProfileWatchers();
     this.refresh();
   }
 
@@ -87,7 +98,27 @@ export class EnvironmentProfileController implements vscode.Disposable {
     }
   }
 
+  private rebuildProfileWatchers(): void {
+    for (const disposable of this.profileWatchers) disposable.dispose();
+    this.profileWatchers = [];
+    if (!this.onVariableFileChange) return;
+
+    for (const folder of vscode.workspace.workspaceFolders ?? []) {
+      const config = vscode.workspace.getConfiguration("hurl", folder.uri);
+      for (const file of profileWatchPaths(config.get("environment.profiles", {}))) {
+        const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(folder, file));
+        this.profileWatchers.push(
+          watcher,
+          watcher.onDidCreate((uri) => this.onVariableFileChange?.(uri, vscode.FileChangeType.Created)),
+          watcher.onDidChange((uri) => this.onVariableFileChange?.(uri, vscode.FileChangeType.Changed)),
+          watcher.onDidDelete((uri) => this.onVariableFileChange?.(uri, vscode.FileChangeType.Deleted)),
+        );
+      }
+    }
+  }
+
   dispose(): void {
+    for (const disposable of this.profileWatchers) disposable.dispose();
     for (const disposable of this.disposables) disposable.dispose();
   }
 }

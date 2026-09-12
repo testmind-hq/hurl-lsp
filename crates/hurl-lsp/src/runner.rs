@@ -166,4 +166,21 @@ mod tests {
         assert_eq!(output.outcome, RunOutcome::Cancelled);
         assert!(!registry.contains("cancel"));
     }
+
+    #[tokio::test]
+    async fn cancellation_before_process_start_is_preserved() {
+        let registry = RunTaskRegistry::default();
+        let receiver = registry.register("cancel-before-start");
+        assert!(registry.cancel("cancel-before-start"));
+
+        let mut command = Command::new("sh");
+        command.args(["-c", "sleep 2"]);
+        let output = execute(&mut command, receiver, Some(Duration::from_secs(1)))
+            .await
+            .expect("runner");
+        registry.finish("cancel-before-start");
+
+        assert_eq!(output.outcome, RunOutcome::Cancelled);
+        assert!(!registry.contains("cancel-before-start"));
+    }
 }
