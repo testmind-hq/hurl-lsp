@@ -57,6 +57,16 @@ pub fn resolve_workspace_variables(
     vars
 }
 
+pub fn resolve_variable_files(paths: &[PathBuf]) -> BTreeMap<String, ResolvedVariable> {
+    let mut vars = BTreeMap::new();
+    for path in paths {
+        for variable in parse_variable_file(path) {
+            vars.insert(variable.name.clone(), variable);
+        }
+    }
+    vars
+}
+
 pub fn write_merged_variables_file(
     vars: &BTreeMap<String, ResolvedVariable>,
     directory: Option<&Path>,

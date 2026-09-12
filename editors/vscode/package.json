@@ -137,6 +137,22 @@
           "maximum": 500,
           "description": "Maximum displayed length for resolved variable inlay hints."
         },
+        "hurl.environment.defaultProfile": {
+          "type": "string",
+          "default": "Auto",
+          "description": "Environment profile selected when a workspace folder has no saved selection."
+        },
+        "hurl.environment.profiles": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "description": "Named environment profiles mapped to ordered variable files relative to the workspace folder."
+        },
         "hurl.outline.groupMode": {
           "type": "string",
           "enum": [

@@ -10,6 +10,7 @@ mod hover;
 mod inlay_hints;
 mod metadata;
 mod openapi;
+mod profiles;
 mod protocol;
 mod symbols;
 mod syntax;
