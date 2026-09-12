@@ -17,6 +17,31 @@ export function profileWatchPaths(value: unknown): string[] {
   return [...new Set(paths.filter(isWorkspaceRelativePath))];
 }
 
+export function discoverConventionProfiles(files: readonly string[]): EnvironmentProfiles {
+  const available = new Set(files);
+  const names = new Set<string>();
+  for (const file of available) {
+    if (!file.startsWith(".env.")) continue;
+    const suffix = file.slice(".env.".length);
+    const name = suffix.endsWith(".local") ? suffix.slice(0, -".local".length) : suffix;
+    if (name && name !== "local") names.add(name);
+  }
+
+  const profiles: EnvironmentProfiles = {};
+  for (const name of [...names].sort()) {
+    profiles[name] = [".env", ".env.local", `.env.${name}`, `.env.${name}.local`]
+      .filter((file) => available.has(file));
+  }
+  return profiles;
+}
+
+export function mergeEnvironmentProfiles(
+  discovered: EnvironmentProfiles,
+  configured: EnvironmentProfiles,
+): EnvironmentProfiles {
+  return { ...discovered, ...configured };
+}
+
 function isWorkspaceRelativePath(value: string): boolean {
   const normalized = value.replace(/\\/g, "/");
   if (normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized)) return false;

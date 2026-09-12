@@ -43,6 +43,8 @@
     "onCommand:hurl.exportAsMarkdown",
     "onCommand:hurl.clearRunAlerts",
     "onCommand:hurl.selectEnvironmentProfile",
+    "onCommand:hurl.createEnvironmentFile",
+    "onCommand:hurl.openEnvironmentFiles",
     "onView:hurlRequests"
   ],
   "main": "./out/extension.js",
@@ -213,6 +215,14 @@
       {
         "command": "hurl.selectEnvironmentProfile",
         "title": "Hurl: Select Environment Profile"
+      },
+      {
+        "command": "hurl.createEnvironmentFile",
+        "title": "Hurl: Create Environment File"
+      },
+      {
+        "command": "hurl.openEnvironmentFiles",
+        "title": "Hurl: Open Active Environment Files"
       },
       {
         "command": "hurl.outline.runEntry",

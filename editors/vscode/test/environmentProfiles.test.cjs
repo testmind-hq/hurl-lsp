@@ -1,6 +1,13 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { AUTO_PROFILE, normalizeProfiles, profileWatchPaths, resolveActiveProfile } = require("../out/environmentProfileModel.js");
+const {
+  AUTO_PROFILE,
+  discoverConventionProfiles,
+  mergeEnvironmentProfiles,
+  normalizeProfiles,
+  profileWatchPaths,
+  resolveActiveProfile,
+} = require("../out/environmentProfileModel.js");
 
 test("resolves selections independently for multiple workspace folders", () => {
   const profiles = { Local:["vars.env", "vars.local.env"], Staging:["vars.staging.env"] };
@@ -21,4 +28,28 @@ test("watches arbitrary configured profile files once per workspace", () => {
     Staging:["staging.env", "vars.env"],
     Invalid:["../outside.env", "/tmp/absolute.env", "C:\\absolute.env"],
   }), ["vars.env", "config/local.env", "staging.env"]);
+});
+
+test("discovers node-style environment profiles in override order", () => {
+  assert.deepEqual(discoverConventionProfiles([
+    ".env.production.local",
+    ".env",
+    ".env.local",
+    ".env.staging",
+    ".env.staging.local",
+    "vars.env",
+  ]), {
+    production:[".env", ".env.local", ".env.production.local"],
+    staging:[".env", ".env.local", ".env.staging", ".env.staging.local"],
+  });
+});
+
+test("configured profiles override convention profiles with the same name", () => {
+  assert.deepEqual(mergeEnvironmentProfiles(
+    { staging:[".env", ".env.staging"], production:[".env.production"] },
+    { staging:["config/staging.env"] },
+  ), {
+    staging:["config/staging.env"],
+    production:[".env.production"],
+  });
 });

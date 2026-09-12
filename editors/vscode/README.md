@@ -85,6 +85,8 @@ OpenAPI path completions need `openapi.yaml` / `swagger.json` in the workspace.
 | `Hurl: Show Request Log` | Open the request log |
 | `Hurl: Clear Run Alerts` | Clear inline run-failure diagnostics |
 | `Hurl: Select Environment Profile` | Select Auto or a named profile for the current workspace folder |
+| `Hurl: Create Environment File` | Create `.env.<name>` or `.env.<name>.local` in the current workspace |
+| `Hurl: Open Active Environment Files` | Select and open files used by the active environment |
 
 ## Settings
 
@@ -104,7 +106,20 @@ OpenAPI path completions need `openapi.yaml` / `swagger.json` in the workspace.
 
 ## Environment profiles
 
-Profiles make the same variables available to diagnostics, completion, hover, inlay hints, cURL generation, Run with vars, Run Chain, and Run File. Configure paths relative to each workspace folder:
+Profiles make the same variables available to diagnostics, completion, hover, inlay hints, cURL generation, Run with vars, Run Chain, and Run File.
+
+For most projects, no settings are required. The extension discovers Node-style files in each workspace root and adds their environment names to the `Hurl: Auto` status-bar selector:
+
+```text
+.env
+.env.local
+.env.staging
+.env.staging.local
+```
+
+Selecting `staging` loads those files from top to bottom, so the more specific file overrides earlier values. `Auto` also loads `.env.local` after `.env`. Creating or deleting `.env.<name>` and `.env.<name>.local` updates the selector automatically; edits refresh Hurl language features and subsequent requests without restarting the server.
+
+Configure explicit paths for custom names and locations:
 
 ```json
 {
@@ -117,7 +132,7 @@ Profiles make the same variables available to diagnostics, completion, hover, in
 }
 ```
 
-Files are merged from left to right, so later files override earlier values. Use the `Hurl: <profile>` status-bar item to select a profile for the current workspace folder. `Auto` preserves automatic discovery of `.hurl-vars`, `vars.env`, `hurl.env`, and `.env`.
+Files are merged from left to right, so later files override earlier values. Explicit profiles override an automatically discovered profile with the same name. Use the `Hurl: <profile>` status-bar item to select a profile for the current workspace folder. `Auto` preserves automatic discovery of `.hurl-vars`, `vars.env`, `hurl.env`, `.env`, and `.env.local`.
 
 Profile files outside the workspace are rejected. Sensitive values remain masked in hovers, inlay hints, cURL previews, logs, and Inspector metadata.
 

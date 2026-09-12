@@ -27,7 +27,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   };
   environmentProfiles = new EnvironmentProfileController(context, notifyVariableFileChange);
   context.subscriptions.push(environmentProfiles);
-  const variableWatcher = vscode.workspace.createFileSystemWatcher("**/{.hurl-vars,vars.env,hurl.env,.env}");
+  await environmentProfiles.initialize();
+  const variableWatcher = vscode.workspace.createFileSystemWatcher("**/{.hurl-vars,vars.env,hurl.env,.env*}");
   context.subscriptions.push(
     variableWatcher,
     variableWatcher.onDidCreate((uri) => notifyVariableFileChange(uri, vscode.FileChangeType.Created)),
