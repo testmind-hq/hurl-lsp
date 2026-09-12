@@ -6,9 +6,18 @@ export type HttpExchange = {
   durationMs?: number;
   timings?: { dnsMs: number; tcpMs: number; tlsMs: number; ttfbMs: number; downloadMs: number; totalMs: number };
 };
+export type RunTaskState = "queued" | "running" | "cancelling" | "succeeded" | "failed" | "cancelled" | "timedOut";
+export type RunTaskUpdate = {
+  taskId: string; uri: string; documentVersion: number; entryLine: number; target: "entry" | "chain" | "file";
+  state: RunTaskState; startedAt: string; elapsedMs: number; profileName?: string; message?: string;
+  stdout?: string; stderr?: string;
+};
+export type RunPhaseTimings = { prepareMs: number; processMs: number; reportMs: number; totalMs: number };
 export type RunResult = {
+  taskId?: string;
   uri: string; documentVersion: number; entryLine: number; target: "entry" | "chain" | "file";
   success: boolean; exitCode?: number; startedAt: string; durationMs?: number;
+  profileName?: string; profileSources?: string[]; phaseTimings?: RunPhaseTimings;
   exchanges: HttpExchange[]; failedAssertions: Array<{ message: string; line?: number }>;
   stdout: string; stderr: string; parseWarning?: string;
 };
@@ -26,6 +35,15 @@ export function isRunResult(value: unknown): value is RunResult {
     typeof value.success === "boolean" && typeof value.startedAt === "string" &&
     Array.isArray(value.exchanges) && Array.isArray(value.failedAssertions) &&
     typeof value.stdout === "string" && typeof value.stderr === "string";
+}
+
+export function isRunTaskUpdate(value: unknown): value is RunTaskUpdate {
+  if (!record(value)) return false;
+  return typeof value.taskId === "string" && typeof value.uri === "string" &&
+    typeof value.documentVersion === "number" && typeof value.entryLine === "number" &&
+    ["entry", "chain", "file"].includes(String(value.target)) &&
+    ["queued", "running", "cancelling", "succeeded", "failed", "cancelled", "timedOut"].includes(String(value.state)) &&
+    typeof value.startedAt === "string" && typeof value.elapsedMs === "number";
 }
 
 export function isCurlResult(value: unknown): value is CurlResult {

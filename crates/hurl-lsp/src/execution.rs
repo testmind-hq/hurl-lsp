@@ -59,6 +59,7 @@ pub fn parse_hurl_report_result(
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
     let mut result = RunResult {
+        task_id: None,
         uri: context.uri.to_string(),
         document_version: context.document_version,
         entry_line: context.entry_line,
@@ -67,6 +68,9 @@ pub fn parse_hurl_report_result(
         exit_code: context.exit_code,
         started_at: String::new(),
         duration_ms: None,
+        profile_name: None,
+        profile_sources: Vec::new(),
+        phase_timings: None,
         exchanges: Vec::new(),
         failed_assertions: Vec::new(),
         stdout: stdout_text,
