@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Features
+
+- Add cancellable execution tasks with live state, configurable timeout, and prepare/process/report/total timing
+- Add workspace-scoped environment profiles with a status-bar selector and ordered variable-file precedence
+- Apply the active environment consistently to language intelligence, cURL generation, and variable-aware run commands
+
 ## 0.3.0 - 2026-09-06
 
 ### Features
