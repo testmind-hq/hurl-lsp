@@ -1,12 +1,12 @@
-import { CurlResult, RunResult } from "./protocol";
+import { CurlResult, RunResult, RunTaskUpdate } from "./protocol";
 
 export type InspectorTab = "request" | "chain" | "result" | "curl";
-export type InspectorSnapshot = { runs: RunResult[]; selectedRun: number; curl?: CurlResult; tab: InspectorTab; revealSecrets: boolean };
+export type InspectorSnapshot = { runs: RunResult[]; tasks: RunTaskUpdate[]; selectedRun: number; curl?: CurlResult; tab: InspectorTab; revealSecrets: boolean };
 type DocumentState = InspectorSnapshot;
 
 const MAX_RESULTS = 10;
 const MAX_DOCUMENT_STATES = 10;
-const emptyState = (): DocumentState => ({ runs: [], selectedRun: -1, tab: "request", revealSecrets: false });
+const emptyState = (): DocumentState => ({ runs: [], tasks: [], selectedRun: -1, tab: "request", revealSecrets: false });
 const documentKey = (uri: string, version: number): string => `${uri}@${version}`;
 
 export class InspectorStore {
@@ -39,6 +39,15 @@ export class InspectorStore {
     state.tab = "result";
     state.revealSecrets = false;
   }
+  updateTask(update: RunTaskUpdate): void {
+    this.selectDocument(update.uri, update.documentVersion);
+    const state = this.current();
+    const index = state.tasks.findIndex((task) => task.taskId === update.taskId);
+    if (index >= 0) state.tasks[index] = update;
+    else state.tasks.push(update);
+    if (state.tasks.length > MAX_RESULTS) state.tasks.splice(0, state.tasks.length - MAX_RESULTS);
+    state.tab = "result";
+  }
   setCurl(result: CurlResult): void {
     this.selectDocument(result.uri, result.documentVersion);
     const state = this.current();
@@ -50,7 +59,7 @@ export class InspectorStore {
   select(tab: InspectorTab): void { this.current().tab = tab; }
   selectRun(index: number): void { const state = this.current(); if (index >= 0 && index < state.runs.length) state.selectedRun = index; }
   toggleSecrets(): void { const state = this.current(); state.revealSecrets = !state.revealSecrets; }
-  snapshot(): InspectorSnapshot { const state = this.current(); return { ...state, runs: [...state.runs] }; }
+  snapshot(): InspectorSnapshot { const state = this.current(); return { ...state, runs: [...state.runs], tasks: [...state.tasks] }; }
 
   private current(): DocumentState {
     if (!this.documents.has(this.currentKey)) this.documents.set(this.currentKey, emptyState());

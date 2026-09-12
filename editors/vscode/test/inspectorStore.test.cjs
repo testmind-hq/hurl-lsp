@@ -9,6 +9,14 @@ test("keeps the newest ten in-memory results", () => {
 });
 test("selects curl tab", () => { const store = new InspectorStore(); store.setCurl({ uri: "file:///a", documentVersion: 1, entryLine: 0, ok: false, unresolvedVariables: ["x"] }); assert.equal(store.snapshot().tab, "curl"); });
 test("invalidates a stale curl preview", () => { const store = new InspectorStore(); store.setCurl({ uri: "file:///a", documentVersion: 1, entryLine: 0, ok: true, command: "curl a", unresolvedVariables: [] }); store.clearCurl(); assert.equal(store.snapshot().curl, undefined); assert.equal(store.snapshot().tab, "curl"); });
+test("updates a run task lifecycle in place", () => {
+  const store = new InspectorStore();
+  const task = { taskId:"task-1", uri:"file:///a.hurl", documentVersion:1, entryLine:0, target:"entry", state:"running", startedAt:"x", elapsedMs:1 };
+  store.updateTask(task); store.updateTask({ ...task, state:"cancelling", elapsedMs:25 });
+  assert.equal(store.snapshot().tasks.length, 1);
+  assert.equal(store.snapshot().tasks[0].state, "cancelling");
+  assert.equal(store.snapshot().tasks[0].elapsedMs, 25);
+});
 test("partitions results by source uri and document version", () => {
   const store = new InspectorStore();
   store.pushRun(run(1));

@@ -6,7 +6,7 @@ import { EnvironmentProfileController } from "./environmentProfiles";
 import { exportActiveHurlAsMarkdown } from "./markdownExport";
 import { HurlOutlineProvider } from "./outlineView";
 import { InspectorController, registerWebviewPanel } from "./webviewPanel";
-import { isCurlResult, isRunResult } from "./protocol";
+import { isCurlResult, isRunResult, isRunTaskUpdate } from "./protocol";
 
 let client: LanguageClient | undefined;
 let runtimeLogChannel: vscode.OutputChannel | undefined;
@@ -246,6 +246,10 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
     client.onNotification("hurl/runResult", (raw: unknown) => {
       if (isRunResult(raw)) inspector?.acceptRun(raw);
       else appendRuntimeLog("Ignored invalid hurl/runResult payload.");
+    }),
+    client.onNotification("hurl/runTaskUpdate", (raw: unknown) => {
+      if (isRunTaskUpdate(raw)) inspector?.acceptTask(raw);
+      else appendRuntimeLog("Ignored invalid hurl/runTaskUpdate payload.");
     }),
     client.onNotification("hurl/curlResult", async (raw: unknown) => {
       if (!isCurlResult(raw)) { appendRuntimeLog("Ignored invalid hurl/curlResult payload."); return; }
