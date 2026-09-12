@@ -100,7 +100,14 @@ export function registerWebviewPanel(context: vscode.ExtensionContext, log: (mes
   const controller: InspectorController = {
     open,
     acceptRun(result) { store.pushRun(result); open("result", { uri: result.uri, version: result.documentVersion, entryLine: result.entryLine }); },
-    acceptTask(update) { store.updateTask(update); open("result", { uri: update.uri, version: update.documentVersion, entryLine: update.entryLine }); },
+    acceptTask(update) {
+      store.updateTask(update);
+      if (update.state === "queued") {
+        open("result", { uri: update.uri, version: update.documentVersion, entryLine: update.entryLine });
+      } else if (boundDocument?.uri === update.uri && boundDocument.version === update.documentVersion) {
+        render();
+      }
+    },
     acceptCurl(result) {
       if (!result.copyToClipboard && panel && store.snapshot().tab === "curl") {
         const value = model();

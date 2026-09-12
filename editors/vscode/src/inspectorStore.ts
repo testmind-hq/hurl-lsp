@@ -40,13 +40,15 @@ export class InspectorStore {
     state.revealSecrets = false;
   }
   updateTask(update: RunTaskUpdate): void {
-    this.selectDocument(update.uri, update.documentVersion);
-    const state = this.current();
+    const key = documentKey(update.uri, update.documentVersion);
+    const state = this.documents.get(key) ?? emptyState();
+    if (!this.documents.has(key)) this.documents.set(key, state);
     const index = state.tasks.findIndex((task) => task.taskId === update.taskId);
     if (index >= 0) state.tasks[index] = update;
     else state.tasks.push(update);
     if (state.tasks.length > MAX_RESULTS) state.tasks.splice(0, state.tasks.length - MAX_RESULTS);
     state.tab = "result";
+    this.pruneDocuments();
   }
   setCurl(result: CurlResult): void {
     this.selectDocument(result.uri, result.documentVersion);
@@ -70,6 +72,12 @@ export class InspectorStore {
     while (this.documents.size > MAX_DOCUMENT_STATES) {
       const oldestKey = this.documents.keys().next().value as string | undefined;
       if (oldestKey === undefined) return;
+      if (oldestKey === this.currentKey) {
+        const current = this.documents.get(oldestKey)!;
+        this.documents.delete(oldestKey);
+        this.documents.set(oldestKey, current);
+        continue;
+      }
       this.documents.delete(oldestKey);
       for (let index = this.runOrder.length - 1; index >= 0; index -= 1) {
         if (this.runOrder[index].key === oldestKey) this.runOrder.splice(index, 1);

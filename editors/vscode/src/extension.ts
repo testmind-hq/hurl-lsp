@@ -278,10 +278,14 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
 
 async function syncEnvironmentProfiles(): Promise<void> {
   if (!client || !environmentProfiles) return;
-  await client.sendRequest("workspace/executeCommand", {
-    command: "hurl.setEnvironmentProfiles",
-    arguments: [environmentProfiles.descriptors()],
-  });
+  try {
+    await client.sendRequest("workspace/executeCommand", {
+      command: "hurl.setEnvironmentProfiles",
+      arguments: [environmentProfiles.descriptors()],
+    });
+  } catch (error) {
+    appendRuntimeLog(`Unable to synchronize environment profiles: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 function toTrace(value: string): Trace {

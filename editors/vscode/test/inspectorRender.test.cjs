@@ -45,7 +45,7 @@ test("renders an independent curl preview action", () => {
   assert.ok(html.includes('data-line="4"'));
 });
 test("renders active tasks with profile and cancel action", () => {
-  const store = new InspectorStore(); store.updateTask({ taskId:"task-1",uri:"file:///a",documentVersion:1,entryLine:0,target:"entry",state:"running",startedAt:"x",elapsedMs:25,profileName:"Local" });
+  const store = new InspectorStore(); store.selectDocument("file:///a", 1); store.updateTask({ taskId:"task-1",uri:"file:///a",documentVersion:1,entryLine:0,target:"entry",state:"running",startedAt:"x",elapsedMs:25,profileName:"Local" });
   const html = renderInspectorHtml({ cspSource:"vscode" }, undefined, store.snapshot());
   assert.ok(html.includes("Running")); assert.ok(html.includes("Local")); assert.ok(html.includes("25 ms")); assert.ok(html.includes('data-type="cancel-run"'));
 });

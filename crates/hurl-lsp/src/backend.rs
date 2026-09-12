@@ -816,8 +816,6 @@ impl LanguageServer for Backend {
             };
             value
         };
-        self.notify_run_task(&task, RunTaskState::Queued, None)
-            .await;
         let temp_file = uri.to_file_path().ok().and_then(|path| {
             path.parent()
                 .map(|parent| tempfile::Builder::new().suffix(".hurl").tempfile_in(parent))
@@ -947,6 +945,8 @@ impl LanguageServer for Backend {
             cmd.env_remove(key);
         }
 
+        self.notify_run_task(&task, RunTaskState::Queued, None)
+            .await;
         let prepare_ms = task.started.elapsed().as_millis() as u64;
         let cancellation = self.run_tasks.register(&task.id);
         self.notify_run_task(&task, RunTaskState::Running, None)
@@ -1034,7 +1034,9 @@ impl LanguageServer for Backend {
                 } else {
                     truncate_message(stderr.as_ref())
                 };
-                if run_inline_failure_diagnostics_enabled() {
+                if output.outcome != RunOutcome::Cancelled
+                    && run_inline_failure_diagnostics_enabled()
+                {
                     self.execution_diagnostics.insert(
                         uri.clone(),
                         execution_diagnostics_for_entry_failure(&text, line as u32, &detail),
