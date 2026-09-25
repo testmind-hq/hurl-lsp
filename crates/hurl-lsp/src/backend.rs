@@ -34,12 +34,13 @@ use crate::{
     variables::{write_merged_variables_file, ResolvedVariable},
     version::display_version,
 };
+use chrono::{DateTime, SecondsFormat, Utc};
 use dashmap::DashMap;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime};
 use tempfile::NamedTempFile;
 use tokio::process::Command as TokioCommand;
 use tokio::sync::{oneshot, watch, RwLock};
@@ -185,11 +186,11 @@ impl Backend {
 }
 
 fn timestamp_now() -> String {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
-        .to_string()
+    timestamp_rfc3339(SystemTime::now())
+}
+
+fn timestamp_rfc3339(value: SystemTime) -> String {
+    DateTime::<Utc>::from(value).to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
 fn spawn_task_updates(
@@ -1313,6 +1314,7 @@ fn position_for_end(text: &str) -> Position {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::UNIX_EPOCH;
 
     #[test]
     fn apply_document_change_clears_execution_diagnostics() {
@@ -1374,5 +1376,14 @@ mod tests {
         assert!(!parse_inline_failure_diagnostics_enabled(Some(
             "false".to_string()
         )));
+    }
+
+    #[test]
+    fn run_task_timestamp_is_rfc3339_utc() {
+        assert_eq!(timestamp_rfc3339(UNIX_EPOCH), "1970-01-01T00:00:00.000Z");
+        assert_eq!(
+            timestamp_rfc3339(UNIX_EPOCH + Duration::from_millis(946_684_800_123)),
+            "2000-01-01T00:00:00.123Z"
+        );
     }
 }
