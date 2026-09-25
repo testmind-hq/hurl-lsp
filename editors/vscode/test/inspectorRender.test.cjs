@@ -44,3 +44,13 @@ test("renders an independent curl preview action", () => {
   assert.ok(html.includes('data-type="preview-curl"'));
   assert.ok(html.includes('data-line="4"'));
 });
+test("renders active tasks with profile and cancel action", () => {
+  const store = new InspectorStore(); store.selectDocument("file:///a", 1); store.updateTask({ taskId:"task-1",uri:"file:///a",documentVersion:1,entryLine:0,target:"entry",state:"running",startedAt:"x",elapsedMs:25,profileName:"Local" });
+  const html = renderInspectorHtml({ cspSource:"vscode" }, undefined, store.snapshot());
+  assert.ok(html.includes("Running")); assert.ok(html.includes("Local")); assert.ok(html.includes("25 ms")); assert.ok(html.includes('data-type="cancel-run"'));
+});
+test("renders execution phase timings", () => {
+  const store = new InspectorStore(); store.pushRun({ taskId:"task-1",uri:"file:///a",documentVersion:1,entryLine:0,target:"entry",success:true,startedAt:"x",phaseTimings:{prepareMs:2,processMs:30,reportMs:1,totalMs:33},exchanges:[],failedAssertions:[],stdout:"",stderr:"" });
+  const html = renderInspectorHtml({ cspSource:"vscode" }, undefined, store.snapshot());
+  assert.ok(html.includes("Prepare 2 ms")); assert.ok(html.includes("Process 30 ms")); assert.ok(html.includes("Report 1 ms")); assert.ok(html.includes("Total 33 ms"));
+});

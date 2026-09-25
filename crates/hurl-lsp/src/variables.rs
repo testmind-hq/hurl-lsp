@@ -7,7 +7,7 @@ use std::{
 use tempfile::{Builder, NamedTempFile};
 use tower_lsp::lsp_types::Url;
 
-const VARIABLE_FILES: &[&str] = &[".hurl-vars", "vars.env", "hurl.env", ".env"];
+const VARIABLE_FILES: &[&str] = &[".hurl-vars", "vars.env", "hurl.env", ".env", ".env.local"];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedVariable {
@@ -22,6 +22,7 @@ pub struct ResolvedVariable {
 
 pub type VariableDef = ResolvedVariable;
 
+#[cfg(test)]
 pub fn load_workspace_variables_with_roots(
     document_uri: &Url,
     workspace_roots: &[PathBuf],
@@ -54,6 +55,16 @@ pub fn resolve_workspace_variables(
         }
     }
 
+    vars
+}
+
+pub fn resolve_variable_files(paths: &[PathBuf]) -> BTreeMap<String, ResolvedVariable> {
+    let mut vars = BTreeMap::new();
+    for path in paths {
+        for variable in parse_variable_file(path) {
+            vars.insert(variable.name.clone(), variable);
+        }
+    }
     vars
 }
 
@@ -208,6 +219,24 @@ mod tests {
             .iter()
             .any(|var| var.name == "port" && var.value == "443"));
 
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn env_local_overrides_env_in_auto_profile() {
+        let base = tmp_dir("hurl-lsp-env-local");
+        fs::create_dir_all(&base).expect("mkdir");
+        fs::write(base.join(".env"), "host=base.example.com\nbase_only=yes\n").expect("write env");
+        fs::write(base.join(".env.local"), "host=local.example.com\n").expect("write local env");
+        let uri = Url::from_file_path(base.join("test.hurl")).expect("uri");
+
+        let vars = load_workspace_variables_with_roots(&uri, std::slice::from_ref(&base));
+        assert!(vars
+            .iter()
+            .any(|var| var.name == "host" && var.value == "local.example.com"));
+        assert!(vars
+            .iter()
+            .any(|var| var.name == "base_only" && var.value == "yes"));
         let _ = fs::remove_dir_all(base);
     }
 

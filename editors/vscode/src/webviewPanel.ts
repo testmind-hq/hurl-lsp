@@ -1,11 +1,11 @@
 import * as vscode from "vscode";
 import { InspectorStore, InspectorTab } from "./inspectorStore";
 import { DocumentViewModel, formatBody, renderInspectorHtml } from "./inspectorRender";
-import { CurlResult, RunResult } from "./protocol";
+import { CurlResult, RunResult, RunTaskUpdate } from "./protocol";
 import { Edge, Entry, inferEdges, parseEntries, pickSelectedEntry } from "./webviewModel";
 
 type ParsedCache = { uri: string; version: number; fileName: string; entries: Entry[]; edges: Edge[] };
-export type InspectorController = { open(tab?: InspectorTab): void; acceptRun(result: RunResult): void; acceptCurl(result: CurlResult): void; dispose(): void };
+export type InspectorController = { open(tab?: InspectorTab): void; acceptRun(result: RunResult): void; acceptTask(update: RunTaskUpdate): void; acceptCurl(result: CurlResult): void; refresh(): void; dispose(): void };
 
 export function registerWebviewPanel(context: vscode.ExtensionContext, log: (message: string) => void): InspectorController {
   let panel: vscode.WebviewPanel | undefined;
@@ -67,6 +67,7 @@ export function registerWebviewPanel(context: vscode.ExtensionContext, log: (mes
       if (message.type === "toggle-secrets") { store.toggleSecrets(); render(); return; }
       if (message.type === "select-run") { store.selectRun(Number(message.index)); render(); return; }
       if (message.type === "copy-curl") { const command = store.snapshot().curl?.command; if (command) { await vscode.env.clipboard.writeText(command); void vscode.window.showInformationMessage("cURL copied to clipboard"); } return; }
+      if (message.type === "cancel-run" && message.taskId) { await vscode.commands.executeCommand("hurl.cancelRun", message.taskId); return; }
       if (message.type === "copy-request") {
         const snapshot = store.snapshot();
         const exchange = snapshot.runs[snapshot.selectedRun]?.exchanges[Number(message.exchange)];
@@ -99,6 +100,14 @@ export function registerWebviewPanel(context: vscode.ExtensionContext, log: (mes
   const controller: InspectorController = {
     open,
     acceptRun(result) { store.pushRun(result); open("result", { uri: result.uri, version: result.documentVersion, entryLine: result.entryLine }); },
+    acceptTask(update) {
+      store.updateTask(update);
+      if (update.state === "queued") {
+        open("result", { uri: update.uri, version: update.documentVersion, entryLine: update.entryLine });
+      } else if (boundDocument?.uri === update.uri && boundDocument.version === update.documentVersion) {
+        render();
+      }
+    },
     acceptCurl(result) {
       if (!result.copyToClipboard && panel && store.snapshot().tab === "curl") {
         const value = model();
@@ -108,6 +117,7 @@ export function registerWebviewPanel(context: vscode.ExtensionContext, log: (mes
       store.setCurl(result);
       open("curl", { uri: result.uri, version: result.documentVersion, entryLine: result.entryLine });
     },
+    refresh() { cache = undefined; render(); },
     dispose() { panel?.dispose(); panel = undefined; },
   };
   context.subscriptions.push(

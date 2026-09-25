@@ -2,10 +2,11 @@ import * as vscode from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions } from "vscode-languageclient/node";
 import { Trace } from "vscode-jsonrpc";
 import { ensureBinary } from "./download";
+import { EnvironmentProfileController } from "./environmentProfiles";
 import { exportActiveHurlAsMarkdown } from "./markdownExport";
 import { HurlOutlineProvider } from "./outlineView";
 import { InspectorController, registerWebviewPanel } from "./webviewPanel";
-import { isCurlResult, isRunResult } from "./protocol";
+import { isCurlResult, isRunResult, isRunTaskUpdate } from "./protocol";
 
 let client: LanguageClient | undefined;
 let runtimeLogChannel: vscode.OutputChannel | undefined;
@@ -13,17 +14,21 @@ let requestLogChannel: vscode.OutputChannel | undefined;
 let logNotificationDisposable: vscode.Disposable | undefined;
 let resultNotificationDisposables: vscode.Disposable[] = [];
 let inspector: InspectorController | undefined;
+let environmentProfiles: EnvironmentProfileController | undefined;
 const REQUEST_LOG_PREFIX = "[hurl-request] ";
 let requestRuns: string[] = [];
 let activeRunIndex = -1;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  const variableWatcher = vscode.workspace.createFileSystemWatcher("**/{.hurl-vars,vars.env,hurl.env,.env}");
   const notifyVariableFileChange = (uri: vscode.Uri, type: vscode.FileChangeType) => {
     void client?.sendNotification("workspace/didChangeWatchedFiles", {
       changes: [{ uri: uri.toString(), type }],
     });
   };
+  environmentProfiles = new EnvironmentProfileController(context, notifyVariableFileChange);
+  context.subscriptions.push(environmentProfiles);
+  await environmentProfiles.initialize();
+  const variableWatcher = vscode.workspace.createFileSystemWatcher("**/{.hurl-vars,vars.env,hurl.env,.env*}");
   context.subscriptions.push(
     variableWatcher,
     variableWatcher.onDidCreate((uri) => notifyVariableFileChange(uri, vscode.FileChangeType.Created)),
@@ -50,6 +55,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
   );
   inspector = registerWebviewPanel(context, appendRuntimeLog);
+  context.subscriptions.push(environmentProfiles.onDidChange(() => {
+    void syncEnvironmentProfiles();
+    inspector?.refresh();
+  }));
   runtimeLogChannel = vscode.window.createOutputChannel("Hurl Runtime Log");
   requestLogChannel = vscode.window.createOutputChannel("Hurl Request Log");
   context.subscriptions.push(runtimeLogChannel);
@@ -127,6 +136,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         event.affectsConfiguration("hurl.outline.groupMode") ||
         event.affectsConfiguration("hurl.outline.sortMode") ||
         event.affectsConfiguration("hurl.run.inlineFailureDiagnostics") ||
+        event.affectsConfiguration("hurl.run.timeoutSeconds") ||
         event.affectsConfiguration("hurl.variables.inlayHints.enabled") ||
         event.affectsConfiguration("hurl.variables.inlayHints.maxLength")
       ) {
@@ -191,6 +201,7 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
   const runInlineFailureDiagnostics = vscode.workspace
     .getConfiguration("hurl")
     .get<boolean>("run.inlineFailureDiagnostics", true);
+  const runTimeoutSeconds = Math.min(3600, Math.max(0, vscode.workspace.getConfiguration("hurl").get<number>("run.timeoutSeconds", 30)));
   const outlineGroupMode = vscode.workspace.getConfiguration("hurl").get<string>("outline.groupMode", "hierarchical");
   const outlineSortMode = vscode.workspace.getConfiguration("hurl").get<string>("outline.sortMode", "source");
   const variableInlayHintsEnabled = vscode.workspace.getConfiguration("hurl")
@@ -205,6 +216,7 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
         HLSP_RUN_VERBOSITY: runVerbosity,
         HLSP_RUN_LOG_MAX_CHARS: String(runLogMaxChars),
         HLSP_RUN_INLINE_FAILURE_DIAGNOSTICS: String(runInlineFailureDiagnostics),
+        HLSP_RUN_TIMEOUT_SECONDS: String(runTimeoutSeconds),
         HLSP_OUTLINE_GROUP_MODE: outlineGroupMode,
         HLSP_OUTLINE_SORT_MODE: outlineSortMode,
         HLSP_VARIABLE_INLAY_HINTS_ENABLED: String(variableInlayHintsEnabled),
@@ -240,6 +252,10 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
       if (isRunResult(raw)) inspector?.acceptRun(raw);
       else appendRuntimeLog("Ignored invalid hurl/runResult payload.");
     }),
+    client.onNotification("hurl/runTaskUpdate", (raw: unknown) => {
+      if (isRunTaskUpdate(raw)) inspector?.acceptTask(raw);
+      else appendRuntimeLog("Ignored invalid hurl/runTaskUpdate payload.");
+    }),
     client.onNotification("hurl/curlResult", async (raw: unknown) => {
       if (!isCurlResult(raw)) { appendRuntimeLog("Ignored invalid hurl/curlResult payload."); return; }
       inspector?.acceptCurl(raw);
@@ -254,10 +270,23 @@ async function start(context: vscode.ExtensionContext): Promise<void> {
   context.subscriptions.push(...resultNotificationDisposables);
 
   await client.start();
+  await syncEnvironmentProfiles();
   client.setTrace(toTrace(traceSetting));
   appendRuntimeLog(
-    `Language client started (trace=${traceSetting}, runVerbosity=${runVerbosity}, runLogMaxChars=${runLogMaxChars}, inlineFailureDiagnostics=${runInlineFailureDiagnostics}, outlineGroupMode=${outlineGroupMode}, outlineSortMode=${outlineSortMode}, variableInlayHints=${variableInlayHintsEnabled}, variableInlayMaxLength=${variableInlayHintsMaxLength}).`,
+    `Language client started (trace=${traceSetting}, runVerbosity=${runVerbosity}, runTimeoutSeconds=${runTimeoutSeconds}, runLogMaxChars=${runLogMaxChars}, inlineFailureDiagnostics=${runInlineFailureDiagnostics}, outlineGroupMode=${outlineGroupMode}, outlineSortMode=${outlineSortMode}, variableInlayHints=${variableInlayHintsEnabled}, variableInlayMaxLength=${variableInlayHintsMaxLength}).`,
   );
+}
+
+async function syncEnvironmentProfiles(): Promise<void> {
+  if (!client || !environmentProfiles) return;
+  try {
+    await client.sendRequest("workspace/executeCommand", {
+      command: "hurl.setEnvironmentProfiles",
+      arguments: [environmentProfiles.descriptors()],
+    });
+  } catch (error) {
+    appendRuntimeLog(`Unable to synchronize environment profiles: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 function toTrace(value: string): Trace {

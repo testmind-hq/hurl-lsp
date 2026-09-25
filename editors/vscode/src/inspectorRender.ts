@@ -38,12 +38,18 @@ function exchange(value: HttpExchange, reveal: boolean, index: number): string {
 }
 
 function resultView(result: RunResult | undefined, snapshot: InspectorSnapshot): string {
-  if (!result) return '<div class="empty">Run a request to inspect its response.</div>';
+  const task = result?.taskId
+    ? snapshot.tasks.find((candidate) => candidate.taskId === result.taskId)
+    : snapshot.tasks[snapshot.tasks.length - 1];
+  const taskView = task ? `<section class="card task"><div class="section-title"><h3>${escapeHtml(task.state === "timedOut" ? "Timed out" : task.state[0].toUpperCase() + task.state.slice(1))}</h3>${task.state === "running" ? `<button data-type="cancel-run" data-task-id="${escapeHtml(task.taskId)}">Cancel run</button>` : ""}</div><div class="muted">${escapeHtml(task.target)} · ${escapeHtml(task.elapsedMs)} ms${task.profileName ? ` · ${escapeHtml(task.profileName)}` : ""}</div>${task.message ? `<div class="warning">${escapeHtml(task.message)}</div>` : ""}${task.stdout ? `<h4>Live stdout</h4><pre>${escapeHtml(task.stdout)}</pre>` : ""}${task.stderr ? `<h4>Live stderr</h4><pre>${escapeHtml(task.stderr)}</pre>` : ""}</section>` : "";
+  if (!result) return taskView || '<div class="empty">Run a request to inspect its response.</div>';
   const reveal = snapshot.revealSecrets;
   const badge = result.success ? '<span class="ok">Passed</span>' : '<span class="fail">Failed</span>';
   const assertions = result.failedAssertions.length ? `<section class="card"><h3>Failed assertions</h3><ul>${result.failedAssertions.map((a) => `<li>${escapeHtml(a.message)}${a.line === undefined ? "" : ` — line ${a.line + 1}`}</li>`).join("")}</ul></section>` : "";
   const history = snapshot.runs.length > 1 ? `<select data-type="select-run">${snapshot.runs.map((run, index) => `<option value="${index}" ${index === snapshot.selectedRun ? "selected" : ""}>${escapeHtml(`${run.success ? "✓" : "✗"} line ${run.entryLine + 1} · ${run.durationMs ?? "?"}ms · ${run.startedAt}`)}</option>`).join("")}</select>` : "";
-  return `<div class="toolbar">${badge}<span>Run total: ${escapeHtml(result.durationMs ?? "?")} ms</span>${history}<button data-type="toggle-secrets">${reveal ? "Hide secrets" : "Reveal secrets"}</button></div>${result.parseWarning ? `<div class="warning">${escapeHtml(result.parseWarning)}</div>` : ""}${result.exchanges.map((item, index) => exchange(item, reveal, index)).join("")}${assertions}<section class="card"><h3>Raw stdout</h3><pre>${escapeHtml(result.stdout || "(empty)")}</pre><h3>Raw stderr</h3><pre>${escapeHtml(result.stderr || "(empty)")}</pre></section>`;
+  const phases = result.phaseTimings ? `<div class="timings"><span>Prepare ${result.phaseTimings.prepareMs} ms</span><span>Process ${result.phaseTimings.processMs} ms</span><span>Report ${result.phaseTimings.reportMs} ms</span><span>Total ${result.phaseTimings.totalMs} ms</span></div>` : "";
+  const profile = result.profileName ? `<div class="muted">Environment: ${escapeHtml(result.profileName)}${result.profileSources?.length ? ` · ${escapeHtml(result.profileSources.join(" → "))}` : ""}</div>` : "";
+  return `${taskView}<div class="toolbar">${badge}<span>Run total: ${escapeHtml(result.durationMs ?? "?")} ms</span>${history}<button data-type="toggle-secrets">${reveal ? "Hide secrets" : "Reveal secrets"}</button></div>${profile}${phases}${result.parseWarning ? `<div class="warning">${escapeHtml(result.parseWarning)}</div>` : ""}${result.exchanges.map((item, index) => exchange(item, reveal, index)).join("")}${assertions}<section class="card"><h3>Raw stdout</h3><pre>${escapeHtml(result.stdout || "(empty)")}</pre><h3>Raw stderr</h3><pre>${escapeHtml(result.stderr || "(empty)")}</pre></section>`;
 }
 
 function requestView(model: DocumentViewModel | undefined): string {
@@ -66,7 +72,8 @@ function curlView(snapshot: InspectorSnapshot, model: DocumentViewModel | undefi
   }
   if (!value.ok) return `<section class="card"><h3>Unable to build cURL</h3><div class="fail">${escapeHtml(value.error ?? "Unknown error")}</div>${value.unresolvedVariables.length ? `<p>Unresolved: ${escapeHtml(value.unresolvedVariables.join(", "))}</p>` : ""}${generateButton}</section>`;
   const shown = snapshot.revealSecrets ? value.command : (value.displayCommand ?? value.command);
-  return `<div class="toolbar"><button data-type="toggle-secrets">${snapshot.revealSecrets ? "Hide secrets" : "Reveal secrets"}</button><button data-type="copy-curl">Copy cURL</button>${generateButton}</div><pre>${escapeHtml(shown ?? "")}</pre>`;
+  const profile = value.profileName ? `<div class="muted">Environment: ${escapeHtml(value.profileName)}${value.profileSources?.length ? ` · ${escapeHtml(value.profileSources.join(" → "))}` : ""}</div>` : "";
+  return `<div class="toolbar"><button data-type="toggle-secrets">${snapshot.revealSecrets ? "Hide secrets" : "Reveal secrets"}</button><button data-type="copy-curl">Copy cURL</button>${generateButton}</div>${profile}<pre>${escapeHtml(shown ?? "")}</pre>`;
 }
 
 export function renderInspectorHtml(webview: WebviewLike, model: DocumentViewModel | undefined, snapshot: InspectorSnapshot): string {

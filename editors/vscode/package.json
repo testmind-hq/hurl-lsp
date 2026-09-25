@@ -2,8 +2,8 @@
   "name": "vscode-hurl",
   "displayName": "Hurl LSP",
   "description": "VSCode support for Hurl powered by hurl-lsp",
-  "version": "0.3.0",
-  "hurlLspVersion": "0.3.0",
+  "version": "0.4.0",
+  "hurlLspVersion": "0.4.0",
   "publisher": "testmind-hq",
   "icon": "media/icon.png",
   "galleryBanner": {
@@ -42,6 +42,9 @@
     "onCommand:hurl.formatDocument",
     "onCommand:hurl.exportAsMarkdown",
     "onCommand:hurl.clearRunAlerts",
+    "onCommand:hurl.selectEnvironmentProfile",
+    "onCommand:hurl.createEnvironmentFile",
+    "onCommand:hurl.openEnvironmentFiles",
     "onView:hurlRequests"
   ],
   "main": "./out/extension.js",
@@ -125,6 +128,13 @@
           "default": true,
           "description": "Show inline red diagnostics when Run/Run Chain execution fails."
         },
+        "hurl.run.timeoutSeconds": {
+          "type": "number",
+          "default": 30,
+          "minimum": 0,
+          "maximum": 3600,
+          "description": "Maximum execution time in seconds. Set to 0 to disable the timeout."
+        },
         "hurl.variables.inlayHints.enabled": {
           "type": "boolean",
           "default": true,
@@ -136,6 +146,22 @@
           "minimum": 8,
           "maximum": 500,
           "description": "Maximum displayed length for resolved variable inlay hints."
+        },
+        "hurl.environment.defaultProfile": {
+          "type": "string",
+          "default": "Auto",
+          "description": "Environment profile selected when a workspace folder has no saved selection."
+        },
+        "hurl.environment.profiles": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "description": "Named environment profiles mapped to ordered variable files relative to the workspace folder."
         },
         "hurl.outline.groupMode": {
           "type": "string",
@@ -185,6 +211,18 @@
       {
         "command": "hurl.clearRunAlerts",
         "title": "Hurl: Clear Run Alerts"
+      },
+      {
+        "command": "hurl.selectEnvironmentProfile",
+        "title": "Hurl: Select Environment Profile"
+      },
+      {
+        "command": "hurl.createEnvironmentFile",
+        "title": "Hurl: Create Environment File"
+      },
+      {
+        "command": "hurl.openEnvironmentFiles",
+        "title": "Hurl: Open Active Environment Files"
       },
       {
         "command": "hurl.outline.runEntry",

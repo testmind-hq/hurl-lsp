@@ -1,8 +1,9 @@
 use crate::{
     code_lens::{
-        code_lenses_with_context, extract_entry_text, CLEAR_RUN_DIAGNOSTICS_COMMAND,
-        COPY_AS_CURL_COMMAND, NOOP_COMMAND, PREVIEW_CURL_COMMAND, RUN_CHAIN_COMMAND,
-        RUN_ENTRY_COMMAND, RUN_ENTRY_WITH_VARS_COMMAND, RUN_FILE_COMMAND,
+        code_lenses_with_context, extract_entry_text, CANCEL_RUN_COMMAND,
+        CLEAR_RUN_DIAGNOSTICS_COMMAND, COPY_AS_CURL_COMMAND, NOOP_COMMAND, PREVIEW_CURL_COMMAND,
+        RUN_CHAIN_COMMAND, RUN_ENTRY_COMMAND, RUN_ENTRY_WITH_VARS_COMMAND, RUN_FILE_COMMAND,
+        SET_ENVIRONMENT_PROFILES_COMMAND,
     },
     completion::completions_with_external,
     curl::{build_curl_for_entry, CurlBuildError},
@@ -20,23 +21,29 @@ use crate::{
         load_openapi_paths_with_roots, load_openapi_request_body_fields_with_roots,
         load_openapi_response_fields_with_roots,
     },
-    protocol::{CurlResult, CurlResultNotification, RunResultNotification},
+    profiles::{
+        resolve_profile, selected_profile_for_document, ResolvedProfile, WorkspaceProfileSelection,
+    },
+    protocol::{
+        CurlResult, CurlResultNotification, RunPhaseTimings, RunResult, RunResultNotification,
+        RunTaskState, RunTaskUpdate, RunTaskUpdateNotification,
+    },
+    runner::{execute as execute_hurl, RunOutcome, RunTaskRegistry},
     symbols::document_symbols,
     syntax::method_from_line,
-    variables::{
-        load_workspace_variables_with_roots, resolve_workspace_variables,
-        write_merged_variables_file,
-    },
+    variables::{write_merged_variables_file, ResolvedVariable},
     version::display_version,
 };
+use chrono::{DateTime, SecondsFormat, Utc};
 use dashmap::DashMap;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime};
 use tempfile::NamedTempFile;
 use tokio::process::Command as TokioCommand;
-use tokio::sync::RwLock;
+use tokio::sync::{oneshot, watch, RwLock};
 use tower_lsp::{jsonrpc::Result, lsp_types::*, Client, LanguageServer};
 use tracing::{error, info, warn};
 use url::Url;
@@ -52,6 +59,18 @@ pub struct DocumentStore {
 struct StoredDocument {
     text: String,
     version: i32,
+}
+
+#[derive(Clone)]
+struct RunTaskContext {
+    id: String,
+    uri: Url,
+    document_version: i32,
+    line: u32,
+    target: String,
+    started_at: String,
+    started: Instant,
+    profile_name: Option<String>,
 }
 
 impl DocumentStore {
@@ -80,6 +99,8 @@ pub struct Backend {
     execution_diagnostics: DashMap<Url, Vec<Diagnostic>>,
     execution_summaries: DashMap<Url, BTreeMap<u32, RunSummary>>,
     workspace_roots: Arc<RwLock<Vec<PathBuf>>>,
+    environment_profiles: Arc<RwLock<Vec<WorkspaceProfileSelection>>>,
+    run_tasks: RunTaskRegistry,
 }
 
 impl Backend {
@@ -90,6 +111,8 @@ impl Backend {
             execution_diagnostics: DashMap::new(),
             execution_summaries: DashMap::new(),
             workspace_roots: Arc::new(RwLock::new(Vec::new())),
+            environment_profiles: Arc::new(RwLock::new(Vec::new())),
+            run_tasks: RunTaskRegistry::default(),
         }
     }
 
@@ -101,10 +124,19 @@ impl Backend {
         self.workspace_roots.read().await.clone()
     }
 
-    async fn publish_diagnostics(&self, uri: Url, text: &str) {
+    async fn resolved_profile(&self, uri: &Url) -> std::result::Result<ResolvedProfile, String> {
         let roots = self.workspace_roots().await;
-        let external = load_workspace_variables_with_roots(&uri, &roots);
-        let external_names: BTreeSet<String> = external.into_iter().map(|item| item.name).collect();
+        let selections = self.environment_profiles.read().await;
+        let selected = selected_profile_for_document(uri, &selections);
+        resolve_profile(uri, &roots, selected.as_ref())
+    }
+
+    async fn publish_diagnostics(&self, uri: Url, text: &str) {
+        let external_names: BTreeSet<String> = self
+            .resolved_profile(&uri)
+            .await
+            .map(|profile| profile.variables.into_keys().collect())
+            .unwrap_or_default();
         let mut diagnostics = collect_diagnostics_with_external(text, &external_names);
         if let Some(execution) = self.execution_diagnostics.get(&uri) {
             diagnostics.extend(execution.iter().cloned());
@@ -127,6 +159,96 @@ impl Backend {
             .log_message(MessageType::INFO, format!("{REQUEST_LOG_PREFIX}{text}"))
             .await;
     }
+
+    async fn notify_run_task(
+        &self,
+        task: &RunTaskContext,
+        state: RunTaskState,
+        message: Option<String>,
+    ) {
+        self.client
+            .send_notification::<RunTaskUpdateNotification>(RunTaskUpdate {
+                task_id: task.id.clone(),
+                uri: task.uri.to_string(),
+                document_version: task.document_version,
+                entry_line: task.line,
+                target: task.target.clone(),
+                state,
+                started_at: task.started_at.clone(),
+                elapsed_ms: task.started.elapsed().as_millis() as u64,
+                profile_name: task.profile_name.clone(),
+                message,
+                stdout: None,
+                stderr: None,
+            })
+            .await;
+    }
+}
+
+fn timestamp_now() -> String {
+    timestamp_rfc3339(SystemTime::now())
+}
+
+fn timestamp_rfc3339(value: SystemTime) -> String {
+    DateTime::<Utc>::from(value).to_rfc3339_opts(SecondsFormat::Millis, true)
+}
+
+fn spawn_task_updates(
+    client: Client,
+    task: RunTaskContext,
+    mut cancellation: watch::Receiver<bool>,
+) -> oneshot::Sender<()> {
+    let (done_tx, mut done_rx) = oneshot::channel();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_millis(250));
+        interval.tick().await;
+        loop {
+            let state = tokio::select! {
+                _ = interval.tick() => RunTaskState::Running,
+                changed = cancellation.changed() => {
+                    if changed.is_ok() && *cancellation.borrow() {
+                        RunTaskState::Cancelling
+                    } else {
+                        break;
+                    }
+                }
+                _ = &mut done_rx => break,
+            };
+            client
+                .send_notification::<RunTaskUpdateNotification>(RunTaskUpdate {
+                    task_id: task.id.clone(),
+                    uri: task.uri.to_string(),
+                    document_version: task.document_version,
+                    entry_line: task.line,
+                    target: task.target.clone(),
+                    state,
+                    started_at: task.started_at.clone(),
+                    elapsed_ms: task.started.elapsed().as_millis() as u64,
+                    profile_name: task.profile_name.clone(),
+                    message: None,
+                    stdout: None,
+                    stderr: None,
+                })
+                .await;
+            if state == RunTaskState::Cancelling {
+                break;
+            }
+        }
+    });
+    done_tx
+}
+
+fn decorate_run_result(
+    mut result: RunResult,
+    task: &RunTaskContext,
+    profile_sources: &[String],
+    phase_timings: RunPhaseTimings,
+) -> RunResult {
+    result.task_id = Some(task.id.clone());
+    result.profile_name = task.profile_name.clone();
+    result.profile_sources = profile_sources.to_vec();
+    result.phase_timings = Some(phase_timings);
+    result
 }
 
 fn apply_document_change(
@@ -258,6 +380,8 @@ impl LanguageServer for Backend {
                         COPY_AS_CURL_COMMAND.to_string(),
                         PREVIEW_CURL_COMMAND.to_string(),
                         CLEAR_RUN_DIAGNOSTICS_COMMAND.to_string(),
+                        CANCEL_RUN_COMMAND.to_string(),
+                        SET_ENVIRONMENT_PROFILES_COMMAND.to_string(),
                         NOOP_COMMAND.to_string(),
                     ],
                     work_done_progress_options: WorkDoneProgressOptions::default(),
@@ -333,8 +457,11 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
         let roots = self.workspace_roots().await;
-        let external = load_workspace_variables_with_roots(&uri, &roots);
-        let external_names: BTreeSet<String> = external.into_iter().map(|item| item.name).collect();
+        let external_names: BTreeSet<String> = self
+            .resolved_profile(&uri)
+            .await
+            .map(|profile| profile.variables.into_keys().collect())
+            .unwrap_or_default();
         let openapi_paths = load_openapi_paths_with_roots(&uri, &roots);
         let openapi_body_fields = load_openapi_request_body_fields_with_roots(&uri, &roots);
         let openapi_response_fields = load_openapi_response_fields_with_roots(&uri, &roots);
@@ -355,12 +482,11 @@ impl LanguageServer for Backend {
         let Some(text) = self.document_text(&uri) else {
             return Ok(None);
         };
-        let roots = self.workspace_roots().await;
-        let external = load_workspace_variables_with_roots(&uri, &roots);
-        let external_map = external
-            .into_iter()
-            .map(|item| (item.name.clone(), item))
-            .collect();
+        let external_map = self
+            .resolved_profile(&uri)
+            .await
+            .map(|profile| profile.variables)
+            .unwrap_or_default();
 
         Ok(hover_with_external(&text, position, &external_map))
     }
@@ -373,8 +499,11 @@ impl LanguageServer for Backend {
         let Some(text) = self.document_text(&uri) else {
             return Ok(None);
         };
-        let roots = self.workspace_roots().await;
-        let external = resolve_workspace_variables(&uri, &roots);
+        let external = self
+            .resolved_profile(&uri)
+            .await
+            .map(|profile| profile.variables)
+            .unwrap_or_default();
         Ok(Some(variable_inlay_hints(
             &text,
             params.range,
@@ -454,8 +583,11 @@ impl LanguageServer for Backend {
         let Some(text) = self.document_text(&uri) else {
             return Ok(None);
         };
-        let roots = self.workspace_roots().await;
-        let external = load_workspace_variables_with_roots(&uri, &roots);
+        let external: Vec<ResolvedVariable> = self
+            .resolved_profile(&uri)
+            .await
+            .map(|profile| profile.variables.into_values().collect())
+            .unwrap_or_default();
 
         Ok(definition_with_external(
             &uri,
@@ -472,6 +604,34 @@ impl LanguageServer for Backend {
         if params.command == NOOP_COMMAND {
             return Ok(None);
         }
+        if params.command == SET_ENVIRONMENT_PROFILES_COMMAND {
+            let selections = params
+                .arguments
+                .first()
+                .cloned()
+                .and_then(|value| {
+                    serde_json::from_value::<Vec<WorkspaceProfileSelection>>(value).ok()
+                })
+                .unwrap_or_default();
+            *self.environment_profiles.write().await = selections;
+            let documents: Vec<(Url, String)> = self
+                .documents
+                .docs
+                .iter()
+                .map(|entry| (entry.key().clone(), entry.value().text.clone()))
+                .collect();
+            for (uri, text) in documents {
+                self.publish_diagnostics(uri, &text).await;
+            }
+            let _ = self.client.inlay_hint_refresh().await;
+            return Ok(None);
+        }
+        if params.command == CANCEL_RUN_COMMAND {
+            let task_id = params.arguments.first().and_then(|value| value.as_str());
+            return Ok(Some(serde_json::Value::Bool(
+                task_id.is_some_and(|id| self.run_tasks.cancel(id)),
+            )));
+        }
         if params.command != RUN_ENTRY_COMMAND
             && params.command != RUN_ENTRY_WITH_VARS_COMMAND
             && params.command != RUN_CHAIN_COMMAND
@@ -479,6 +639,8 @@ impl LanguageServer for Backend {
             && params.command != COPY_AS_CURL_COMMAND
             && params.command != PREVIEW_CURL_COMMAND
             && params.command != CLEAR_RUN_DIAGNOSTICS_COMMAND
+            && params.command != CANCEL_RUN_COMMAND
+            && params.command != SET_ENVIRONMENT_PROFILES_COMMAND
         {
             return Ok(None);
         }
@@ -523,32 +685,20 @@ impl LanguageServer for Backend {
             let Some((text, version)) = self.documents.snapshot(&uri) else {
                 return Ok(None);
             };
-            let roots = self.workspace_roots().await;
-            let vars = resolve_workspace_variables(&uri, &roots);
-            let result = match build_curl_for_entry(&text, line, &vars) {
-                Ok(curl) => CurlResult {
-                    uri: uri.to_string(),
-                    document_version: version,
-                    entry_line: line as u32,
-                    ok: true,
-                    command: Some(curl.command.clone()),
-                    display_command: Some(curl.display_command),
-                    unresolved_variables: vec![],
-                    error: None,
-                    copy_to_clipboard: params.command == COPY_AS_CURL_COMMAND,
-                },
-                Err(CurlBuildError::UnresolvedVariables(names)) => CurlResult {
-                    uri: uri.to_string(),
-                    document_version: version,
-                    entry_line: line as u32,
-                    ok: false,
-                    command: None,
-                    display_command: None,
-                    unresolved_variables: names,
-                    error: Some("Resolve all variables before generating cURL.".into()),
-                    copy_to_clipboard: params.command == COPY_AS_CURL_COMMAND,
-                },
-                Err(error) => CurlResult {
+            let profile = self.resolved_profile(&uri).await;
+            let vars = profile
+                .as_ref()
+                .map(|value| value.variables.clone())
+                .unwrap_or_default();
+            let profile_name = profile.as_ref().ok().map(|value| value.name.clone());
+            let profile_sources = profile
+                .as_ref()
+                .ok()
+                .map(|value| value.source_files.clone())
+                .unwrap_or_default();
+            let profile_error = profile.as_ref().err().cloned();
+            let result = if let Some(error) = profile_error {
+                CurlResult {
                     uri: uri.to_string(),
                     document_version: version,
                     entry_line: line as u32,
@@ -556,9 +706,53 @@ impl LanguageServer for Backend {
                     command: None,
                     display_command: None,
                     unresolved_variables: vec![],
-                    error: Some(format!("{error:?}")),
+                    profile_name: profile_name.clone(),
+                    profile_sources: profile_sources.clone(),
+                    error: Some(error),
                     copy_to_clipboard: params.command == COPY_AS_CURL_COMMAND,
-                },
+                }
+            } else {
+                match build_curl_for_entry(&text, line, &vars) {
+                    Ok(curl) => CurlResult {
+                        uri: uri.to_string(),
+                        document_version: version,
+                        entry_line: line as u32,
+                        ok: true,
+                        command: Some(curl.command.clone()),
+                        display_command: Some(curl.display_command),
+                        unresolved_variables: vec![],
+                        profile_name: profile_name.clone(),
+                        profile_sources: profile_sources.clone(),
+                        error: None,
+                        copy_to_clipboard: params.command == COPY_AS_CURL_COMMAND,
+                    },
+                    Err(CurlBuildError::UnresolvedVariables(names)) => CurlResult {
+                        uri: uri.to_string(),
+                        document_version: version,
+                        entry_line: line as u32,
+                        ok: false,
+                        command: None,
+                        display_command: None,
+                        unresolved_variables: names,
+                        profile_name: profile_name.clone(),
+                        profile_sources: profile_sources.clone(),
+                        error: Some("Resolve all variables before generating cURL.".into()),
+                        copy_to_clipboard: params.command == COPY_AS_CURL_COMMAND,
+                    },
+                    Err(error) => CurlResult {
+                        uri: uri.to_string(),
+                        document_version: version,
+                        entry_line: line as u32,
+                        ok: false,
+                        command: None,
+                        display_command: None,
+                        unresolved_variables: vec![],
+                        profile_name,
+                        profile_sources,
+                        error: Some(format!("{error:?}")),
+                        copy_to_clipboard: params.command == COPY_AS_CURL_COMMAND,
+                    },
+                }
             };
             let return_value = result.command.clone().map(serde_json::Value::String);
             self.client
@@ -576,6 +770,16 @@ impl LanguageServer for Backend {
             "chain"
         } else {
             "entry"
+        };
+        let mut task = RunTaskContext {
+            id: self.run_tasks.next_id(),
+            uri: uri.clone(),
+            document_version,
+            line: line as u32,
+            target: run_target.into(),
+            started_at: timestamp_now(),
+            started: Instant::now(),
+            profile_name: None,
         };
         let run_target_kind = match run_target {
             "file" => RunTarget::File,
@@ -664,10 +868,19 @@ impl LanguageServer for Backend {
             .arg("--no-color")
             .arg("--no-pretty");
         let mut merged_vars_file = None;
+        let mut profile_sources = Vec::new();
         let use_workspace_vars = command_uses_workspace_vars(&params.command);
         if use_workspace_vars {
-            let roots = self.workspace_roots().await;
-            let variables = resolve_workspace_variables(&uri, &roots);
+            let profile = match self.resolved_profile(&uri).await {
+                Ok(profile) => profile,
+                Err(error) => {
+                    self.client.show_message(MessageType::ERROR, error).await;
+                    return Ok(None);
+                }
+            };
+            task.profile_name = Some(profile.name);
+            profile_sources = profile.source_files;
+            let variables = profile.variables;
             let parent = uri
                 .to_file_path()
                 .ok()
@@ -722,6 +935,7 @@ impl LanguageServer for Backend {
             "HURL_RUN_VERBOSITY",
             "HURL_RUN_LOG_MAX_CHARS",
             "HURL_RUN_INLINE_FAILURE_DIAGNOSTICS",
+            "HURL_RUN_TIMEOUT_SECONDS",
             "HURL_OUTLINE_GROUP_MODE",
             "HURL_OUTLINE_SORT_MODE",
             "HURL_OUTLINE_MAX_ENTRIES",
@@ -732,11 +946,22 @@ impl LanguageServer for Backend {
             cmd.env_remove(key);
         }
 
-        let output = cmd.output().await;
+        let cancellation = self.run_tasks.register(&task.id);
+        self.notify_run_task(&task, RunTaskState::Queued, None)
+            .await;
+        let prepare_ms = task.started.elapsed().as_millis() as u64;
+        self.notify_run_task(&task, RunTaskState::Running, None)
+            .await;
+        let task_updates_done =
+            spawn_task_updates(self.client.clone(), task.clone(), cancellation.clone());
+        let timeout = run_timeout();
+        let output = execute_hurl(&mut cmd, cancellation, timeout).await;
+        let _ = task_updates_done.send(());
+        self.run_tasks.finish(&task.id);
         drop(merged_vars_file);
         let request_log_limit = request_log_max_chars();
         match output {
-            Ok(output) if output.status.success() => {
+            Ok(output) if output.outcome == RunOutcome::Completed && output.status.success() => {
                 self.execution_diagnostics.remove(&uri);
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -762,6 +987,7 @@ impl LanguageServer for Backend {
                 }
                 self.log_execution(format!("hurl run succeeded ({run_target}) for {}", uri))
                     .await;
+                let report_started = Instant::now();
                 let result = parse_hurl_report_result(
                     RunResultContext {
                         uri: &uri,
@@ -775,20 +1001,43 @@ impl LanguageServer for Backend {
                     &output.stdout,
                     &output.stderr,
                 );
+                let report_ms = report_started.elapsed().as_millis() as u64;
+                let result = decorate_run_result(
+                    result,
+                    &task,
+                    &profile_sources,
+                    RunPhaseTimings {
+                        prepare_ms,
+                        process_ms: output.process_ms,
+                        report_ms,
+                        total_ms: task.started.elapsed().as_millis() as u64,
+                    },
+                );
                 self.client
                     .send_notification::<RunResultNotification>(result)
+                    .await;
+                self.notify_run_task(&task, RunTaskState::Succeeded, None)
                     .await;
                 self.publish_diagnostics(uri, &text).await;
             }
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let stdout = String::from_utf8_lossy(&output.stdout);
-                let detail = if stderr.trim().is_empty() {
+                let detail = if output.outcome == RunOutcome::Cancelled {
+                    "Run cancelled by user.".to_string()
+                } else if output.outcome == RunOutcome::TimedOut {
+                    format!(
+                        "Run timed out after {} seconds.",
+                        timeout.map(|value| value.as_secs()).unwrap_or_default()
+                    )
+                } else if stderr.trim().is_empty() {
                     format!("exit status: {}", output.status)
                 } else {
                     truncate_message(stderr.as_ref())
                 };
-                if run_inline_failure_diagnostics_enabled() {
+                if output.outcome != RunOutcome::Cancelled
+                    && run_inline_failure_diagnostics_enabled()
+                {
                     self.execution_diagnostics.insert(
                         uri.clone(),
                         execution_diagnostics_for_entry_failure(&text, line as u32, &detail),
@@ -822,6 +1071,7 @@ impl LanguageServer for Backend {
                     uri, detail
                 ))
                 .await;
+                let report_started = Instant::now();
                 let result = parse_hurl_report_result(
                     RunResultContext {
                         uri: &uri,
@@ -835,12 +1085,33 @@ impl LanguageServer for Backend {
                     &output.stdout,
                     &output.stderr,
                 );
+                let report_ms = report_started.elapsed().as_millis() as u64;
+                let result = decorate_run_result(
+                    result,
+                    &task,
+                    &profile_sources,
+                    RunPhaseTimings {
+                        prepare_ms,
+                        process_ms: output.process_ms,
+                        report_ms,
+                        total_ms: task.started.elapsed().as_millis() as u64,
+                    },
+                );
                 self.client
                     .send_notification::<RunResultNotification>(result)
                     .await;
-                self.client
-                    .show_message(MessageType::ERROR, format!("hurl run failed: {detail}"))
+                let terminal_state = match output.outcome {
+                    RunOutcome::Cancelled => RunTaskState::Cancelled,
+                    RunOutcome::TimedOut => RunTaskState::TimedOut,
+                    RunOutcome::Completed => RunTaskState::Failed,
+                };
+                self.notify_run_task(&task, terminal_state, Some(detail.clone()))
                     .await;
+                if output.outcome == RunOutcome::Completed {
+                    self.client
+                        .show_message(MessageType::ERROR, format!("hurl run failed: {detail}"))
+                        .await;
+                }
                 self.publish_diagnostics(uri, &text).await;
             }
             Err(error) => {
@@ -873,6 +1144,7 @@ impl LanguageServer for Backend {
                     uri, error
                 ))
                 .await;
+                let report_started = Instant::now();
                 let result = parse_hurl_report_result(
                     RunResultContext {
                         uri: &uri,
@@ -886,8 +1158,22 @@ impl LanguageServer for Backend {
                     b"",
                     err_text.as_bytes(),
                 );
+                let report_ms = report_started.elapsed().as_millis() as u64;
+                let result = decorate_run_result(
+                    result,
+                    &task,
+                    &profile_sources,
+                    RunPhaseTimings {
+                        prepare_ms,
+                        process_ms: 0,
+                        report_ms,
+                        total_ms: task.started.elapsed().as_millis() as u64,
+                    },
+                );
                 self.client
                     .send_notification::<RunResultNotification>(result)
+                    .await;
+                self.notify_run_task(&task, RunTaskState::Failed, Some(err_text.clone()))
                     .await;
                 self.client
                     .show_message(
@@ -926,6 +1212,14 @@ fn request_log_max_chars() -> Option<usize> {
         Some(v) => Some(v),
         None => Some(6000),
     }
+}
+
+fn run_timeout() -> Option<Duration> {
+    let seconds = env_with_legacy("HLSP_RUN_TIMEOUT_SECONDS", "HURL_RUN_TIMEOUT_SECONDS")
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(30)
+        .min(3600);
+    (seconds > 0).then(|| Duration::from_secs(seconds))
 }
 
 fn run_inline_failure_diagnostics_enabled() -> bool {
@@ -1020,6 +1314,7 @@ fn position_for_end(text: &str) -> Position {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::UNIX_EPOCH;
 
     #[test]
     fn apply_document_change_clears_execution_diagnostics() {
@@ -1081,5 +1376,14 @@ mod tests {
         assert!(!parse_inline_failure_diagnostics_enabled(Some(
             "false".to_string()
         )));
+    }
+
+    #[test]
+    fn run_task_timestamp_is_rfc3339_utc() {
+        assert_eq!(timestamp_rfc3339(UNIX_EPOCH), "1970-01-01T00:00:00.000Z");
+        assert_eq!(
+            timestamp_rfc3339(UNIX_EPOCH + Duration::from_millis(946_684_800_123)),
+            "2000-01-01T00:00:00.123Z"
+        );
     }
 }

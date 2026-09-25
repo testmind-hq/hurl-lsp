@@ -2,7 +2,41 @@ use serde::{Deserialize, Serialize};
 use tower_lsp::lsp_types::notification::Notification;
 
 pub const RUN_RESULT_METHOD: &str = "hurl/runResult";
+pub const RUN_TASK_UPDATE_METHOD: &str = "hurl/runTaskUpdate";
 pub const CURL_RESULT_METHOD: &str = "hurl/curlResult";
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RunTaskState {
+    Queued,
+    Running,
+    Cancelling,
+    Succeeded,
+    Failed,
+    Cancelled,
+    TimedOut,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunTaskUpdate {
+    pub task_id: String,
+    pub uri: String,
+    pub document_version: i32,
+    pub entry_line: u32,
+    pub target: String,
+    pub state: RunTaskState,
+    pub started_at: String,
+    pub elapsed_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stdout: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stderr: Option<String>,
+}
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -69,6 +103,15 @@ pub struct HttpTimings {
     pub total_ms: u64,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunPhaseTimings {
+    pub prepare_ms: u64,
+    pub process_ms: u64,
+    pub report_ms: u64,
+    pub total_ms: u64,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FailedAssertion {
@@ -80,6 +123,8 @@ pub struct FailedAssertion {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
     pub uri: String,
     pub document_version: i32,
     pub entry_line: u32,
@@ -90,6 +135,12 @@ pub struct RunResult {
     pub started_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_name: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub profile_sources: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phase_timings: Option<RunPhaseTimings>,
     pub exchanges: Vec<HttpExchange>,
     pub failed_assertions: Vec<FailedAssertion>,
     pub stdout: String,
@@ -111,6 +162,10 @@ pub struct CurlResult {
     pub display_command: Option<String>,
     pub unresolved_variables: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_name: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub profile_sources: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub copy_to_clipboard: bool,
 }
@@ -119,6 +174,12 @@ pub enum RunResultNotification {}
 impl Notification for RunResultNotification {
     type Params = RunResult;
     const METHOD: &'static str = RUN_RESULT_METHOD;
+}
+
+pub enum RunTaskUpdateNotification {}
+impl Notification for RunTaskUpdateNotification {
+    type Params = RunTaskUpdate;
+    const METHOD: &'static str = RUN_TASK_UPDATE_METHOD;
 }
 
 pub enum CurlResultNotification {}
@@ -141,6 +202,8 @@ mod tests {
             command: None,
             display_command: None,
             unresolved_variables: vec!["token".into()],
+            profile_name: Some("Local".into()),
+            profile_sources: vec!["vars.local.env".into()],
             error: Some("missing".into()),
             copy_to_clipboard: false,
         };
@@ -149,5 +212,28 @@ mod tests {
         assert_eq!(value["entryLine"], 4);
         assert_eq!(value["unresolvedVariables"][0], "token");
         assert!(value.get("document_version").is_none());
+    }
+
+    #[test]
+    fn serializes_run_task_updates_as_camel_case() {
+        let update = RunTaskUpdate {
+            task_id: "task-1".into(),
+            uri: "file:///tmp/a.hurl".into(),
+            document_version: 3,
+            entry_line: 4,
+            target: "entry".into(),
+            state: RunTaskState::Running,
+            started_at: "2026-09-12T00:00:00Z".into(),
+            elapsed_ms: 25,
+            profile_name: Some("Local".into()),
+            message: None,
+            stdout: None,
+            stderr: None,
+        };
+        let value = serde_json::to_value(update).expect("json");
+        assert_eq!(value["taskId"], "task-1");
+        assert_eq!(value["documentVersion"], 3);
+        assert_eq!(value["state"], "running");
+        assert_eq!(value["profileName"], "Local");
     }
 }

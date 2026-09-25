@@ -1,6 +1,25 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 - 2026-09-25
+
+### Features
+
+- Add cancellable execution tasks with live state, configurable timeout, and prepare/process/report/total timing
+- Add workspace-scoped environment profiles with a status-bar selector and ordered variable-file precedence
+- Apply the active environment consistently to language intelligence, cURL generation, and variable-aware run commands
+- Discover Node-style `.env.<profile>` and `.env.<profile>.local` files without configuration
+- Add commands to create and open environment files from VS Code
+
+### Fixes
+
+- Register cancellable tasks before publishing their queued state
+- Refresh language intelligence when configured profile files change
+- Keep task updates associated with their source document
+- Emit run-task start times as RFC 3339 timestamps
+
+### Documentation
+
+- Add a VS Code request execution and Inspector workflow demo
 
 ## 0.3.0 - 2026-09-06
 
