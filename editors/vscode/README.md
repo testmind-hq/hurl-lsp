@@ -4,6 +4,10 @@ Language support for [Hurl](https://hurl.dev) `.hurl` files, powered by [hurl-ls
 
 ![Hurl LSP](https://raw.githubusercontent.com/testmind-hq/hurl-lsp/main/editors/vscode/media/icon.png)
 
+## Demo
+
+![Run Hurl requests and inspect structured results](https://raw.githubusercontent.com/testmind-hq/hurl-lsp/main/editors/vscode/media/demo.gif)
+
 The extension registers the `hurl` language, starts a local language server, and auto-downloads a matching `hurl-lsp` binary when needed.
 
 This project is under active development. Feedback and issues are welcome at [testmind-hq/hurl-lsp](https://github.com/testmind-hq/hurl-lsp/issues).

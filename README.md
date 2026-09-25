@@ -32,6 +32,10 @@ Until now, editing `.hurl` files in any editor meant writing in the dark — no 
 
 Built in Rust on top of [`tower-lsp`](https://github.com/ebkalderon/tower-lsp) and the official [`hurl_core`](https://crates.io/crates/hurl_core) parser, `hurl-lsp` is currently focused on a solid v0 baseline: core LSP features plus a working VSCode extension.
 
+### VS Code demo
+
+![Hurl LSP VS Code request execution and Inspector demo](editors/vscode/media/demo.gif)
+
 Current implementation status:
 
 - Rust language server with diagnostics, completions, hover, formatting, outline, and variable definition jump
